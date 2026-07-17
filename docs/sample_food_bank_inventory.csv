@@ -1,5 +1,5 @@
-site,category,count,county,lat,lon
-Oakland Community Food Bank,canned_goods,180,Alameda,37.8044,-122.2712
-Oakland Community Food Bank,produce,72,Alameda,37.8044,-122.2712
-Oakland Community Food Bank,dairy,36,Alameda,37.8044,-122.2712
-Oakland Community Food Bank,dry_goods,145,Alameda,37.8044,-122.2712
+product_name,brand,category,subcategory,quantity,unit,lot_number,expiration_date,warehouse_zone,bin_location,condition,source_name,barcode,notes
+Canned goods,,canned_goods,,180,items,,,A,01,good,Oakland Community Food Bank,,
+Produce,,produce,,72,items,,,B,01,good,Oakland Community Food Bank,,
+Dairy,,dairy,,36,items,,,C,01,good,Oakland Community Food Bank,,
+Dry goods,,dry_goods,,145,items,,,D,01,good,Oakland Community Food Bank,,
