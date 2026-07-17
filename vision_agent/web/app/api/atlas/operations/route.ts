@@ -47,7 +47,7 @@ export async function GET() {
     );
   }
 }
-export async function POST() {
+export async function POST(request: Request) {
   const session = await getSession();
   if (!session)
     return NextResponse.json(
@@ -55,6 +55,15 @@ export async function POST() {
       { status: 401 },
     );
   try {
+    const requestBody = await request.json().catch(() => ({}));
+    const requestedCategory =
+      typeof requestBody?.category === "string" && requestBody.category.trim()
+        ? requestBody.category.trim()
+        : null;
+    const parLevel = Math.max(
+      0,
+      Math.min(100000, Number(requestBody?.parLevel ?? 10) || 10),
+    );
     const context = await foodBankContext(session);
     const siteRows =
         await sql()`SELECT s.id,s.name,s.county,s.state,s.latitude,s.longitude,s.safety_stock_policy,a.name agent_name FROM sites s LEFT JOIN agents a ON a.site_id=s.id AND a.agent_type='site' AND a.active=true WHERE s.id=${context.siteId}`,
@@ -96,7 +105,12 @@ export async function POST() {
             )
             .map((row) => Number(row.quantity)),
           balanceTarget = networkBalanceTarget(onHand, peerInventory),
-          target = Math.max(model.forecast, safetyStock, balanceTarget);
+          target = Math.max(
+            model.forecast,
+            safetyStock,
+            balanceTarget,
+            parLevel,
+          );
         return {
           category,
           onHand,
@@ -108,7 +122,13 @@ export async function POST() {
         };
       })
       .sort((a, b) => b.shortage - a.shortage);
-    const need = forecasts[0] || {
+    const need = (requestedCategory
+      ? forecasts.find(
+          (forecast) =>
+            forecast.category.trim().toLowerCase() ===
+            requestedCategory.toLowerCase(),
+        )
+      : forecasts[0]) || {
       category: "Unspecified",
       onHand: 0,
       baseline: 0,
@@ -117,6 +137,9 @@ export async function POST() {
       confidence: 0.35,
       method: "no inventory history",
       shortage: 0,
+      target: parLevel,
+      safetyStock: 0,
+      networkBalanceTarget: 0,
     };
     const candidates = network
       .filter(
@@ -133,10 +156,13 @@ export async function POST() {
           latitude: Number(x.latitude),
           longitude: Number(x.longitude),
         };
-        const safetyStock = Number(
-            ((x.safety_stock_policy as Record<string, number>) || {})[
-              need.category
-            ] || 0,
+        const safetyStock = Math.max(
+            parLevel,
+            Number(
+              ((x.safety_stock_policy as Record<string, number>) || {})[
+                need.category
+              ] || 0,
+            ),
           ),
           reserved = Number(x.reserved || 0),
           available = verifiedSurplus(
@@ -217,7 +243,7 @@ export async function POST() {
           agent: "Inventory Agent",
           input: { siteId: site.id, agentName: requestingAgent },
           output: { categories: forecasts },
-          explanation: `${requestingAgent} audited ${inventory.length} categories against approved dispatch history and site safety stock.`,
+          explanation: `${requestingAgent} found ${need.category} at ${need.onHand} units against a par target of ${need.target}.`,
           approval: false,
         },
         {

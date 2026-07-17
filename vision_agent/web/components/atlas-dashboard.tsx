@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { VisionIntake } from "./vision-intake";
 import { WarehouseSearch } from "./warehouse-search";
 import { AtlasOperations } from "./atlas-operations";
+import { ShortageWorkflow } from "./shortage-workflow";
 import { apiJson } from "./client-api";
 const FoodBankMap = dynamic(() => import("./food-bank-map"), { ssr: false });
 type User = { displayName: string; email: string };
@@ -68,6 +69,12 @@ export function AtlasDashboard({ initialUser }: { initialUser: User | null }) {
     [items, setItems] = useState<Item[]>([]),
     [notice, setNotice] = useState(""),
     [busy, setBusy] = useState(false),
+    [parLevel, setParLevel] = useState(10),
+    [shortageItem, setShortageItem] = useState<{
+      productName: string;
+      category: string;
+      quantity: number;
+    } | null>(null),
     [agent, setAgent] = useState<{
       summary: Record<string, number>;
       recommendations: Array<{
@@ -130,6 +137,13 @@ export function AtlasDashboard({ initialUser }: { initialUser: User | null }) {
       });
       setItems((a) => a.map((i) => (i.id === item.id ? x.item : i)));
       setNotice("Edit saved and audit logged.");
+      if (field === "quantity" && Number(x.item.quantity) < parLevel) {
+        setShortageItem({
+          productName: x.item.product_name,
+          category: x.item.category,
+          quantity: Number(x.item.quantity),
+        });
+      }
     } catch (e) {
       setNotice(e instanceof Error ? e.message : "Save failed");
       await load();
@@ -139,6 +153,19 @@ export function AtlasDashboard({ initialUser }: { initialUser: User | null }) {
     setBusy(true);
     try {
       setAgent(await json("/api/agent/monitor"));
+      const low = items
+        .filter((item) => Number(item.quantity) < parLevel)
+        .sort((a, b) => Number(a.quantity) - Number(b.quantity))[0];
+      if (low)
+        setShortageItem({
+          productName: low.product_name,
+          category: low.category,
+          quantity: Number(low.quantity),
+        });
+      else
+        setNotice(
+          `Inventory review complete. Nothing is below the ${parLevel}-unit par level.`,
+        );
     } catch (e) {
       setNotice(e instanceof Error ? e.message : "Agent unavailable");
     } finally {
@@ -467,11 +494,26 @@ export function AtlasDashboard({ initialUser }: { initialUser: User | null }) {
                   </p>
                 </div>
               </div>
-              <AtlasOperations
-                label="Run inventory + network review"
-                launchOnOpen
-                onOpen={runAgent}
-              />
+              <div className="review-controls">
+                <label>
+                  Par level
+                  <input
+                    type="number"
+                    min="0"
+                    value={parLevel}
+                    onChange={(event) =>
+                      setParLevel(Math.max(0, Number(event.target.value) || 0))
+                    }
+                  />
+                </label>
+                <button
+                  className="button light"
+                  disabled={busy}
+                  onClick={() => void runAgent()}
+                >
+                  {busy ? "Reviewing inventory…" : "Run inventory review"}
+                </button>
+              </div>
             </div>
             {agent && (
               <>
@@ -524,6 +566,14 @@ export function AtlasDashboard({ initialUser }: { initialUser: User | null }) {
           </section>
         )}
       </main>
+      {shortageItem && (
+        <ShortageWorkflow
+          item={shortageItem}
+          parLevel={parLevel}
+          onClose={() => setShortageItem(null)}
+          onComplete={load}
+        />
+      )}
     </div>
   );
 }
