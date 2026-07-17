@@ -32,7 +32,7 @@ export async function GET() {
   try {
     const context = await foodBankContext(session),
       items =
-        await sql()`SELECT * FROM inventory_items WHERE site_id=${context.siteId} ORDER BY expiration_date NULLS LAST,product_name`;
+        await sql()`SELECT * FROM inventory_items WHERE site_id=${context.siteId} AND archived_at IS NULL ORDER BY expiration_date NULLS LAST,product_name`;
     return NextResponse.json({ context, items });
   } catch (error) {
     return NextResponse.json(

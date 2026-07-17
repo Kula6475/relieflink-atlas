@@ -17,7 +17,7 @@ export async function POST(request: Request) {
       { query } = Input.parse(await request.json()),
       parsed = await interpretInventoryQuery(query),
       f = parsed.filter,
-      where = ["site_id=$1"],
+      where = ["site_id=$1", "archived_at IS NULL"],
       values: unknown[] = [context.siteId];
     const one = (column: string, value: unknown) => {
       values.push(value);

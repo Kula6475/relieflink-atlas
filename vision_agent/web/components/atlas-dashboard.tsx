@@ -154,6 +154,22 @@ export function AtlasDashboard({ initialUser }: { initialUser: User | null }) {
       await load();
     }
   }
+  async function removeItem(item: Item) {
+    if (
+      !window.confirm(
+        `Remove ${item.product_name} from this spreadsheet? Its remaining ${Number(item.quantity).toLocaleString()} ${item.unit} will be recorded as an outbound adjustment.`,
+      )
+    )
+      return;
+    try {
+      await json(`/api/inventory/items/${item.id}`, { method: "DELETE" });
+      setItems((current) => current.filter((row) => row.id !== item.id));
+      setNotice(`${item.product_name} removed. The ledger history was preserved.`);
+    } catch (e) {
+      setNotice(e instanceof Error ? e.message : "Remove failed");
+      await load();
+    }
+  }
   async function runAgent() {
     setBusy(true);
     try {
@@ -458,7 +474,8 @@ export function AtlasDashboard({ initialUser }: { initialUser: User | null }) {
             </div>
             <p className="muted">
               Click any cell and edit it. Changes save on Enter or when you
-              leave the cell.
+              leave the cell. Remove hides the row while preserving its ledger
+              history.
             </p>
             <div className="sheet-wrap">
               <table>
@@ -468,6 +485,7 @@ export function AtlasDashboard({ initialUser }: { initialUser: User | null }) {
                     {columns.map(([f, l]) => (
                       <th key={f}>{l}</th>
                     ))}
+                    <th aria-label="Row actions">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -503,11 +521,21 @@ export function AtlasDashboard({ initialUser }: { initialUser: User | null }) {
                             />
                           </td>
                         ))}
+                        <td className="sheet-actions">
+                          <button
+                            type="button"
+                            className="remove-row"
+                            onClick={() => void removeItem(item)}
+                            aria-label={`Remove ${item.product_name}`}
+                          >
+                            Remove
+                          </button>
+                        </td>
                       </tr>
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={columns.length + 1} className="empty">
+                      <td colSpan={columns.length + 2} className="empty">
                         No inventory yet. Add an item or import a CSV.
                       </td>
                     </tr>

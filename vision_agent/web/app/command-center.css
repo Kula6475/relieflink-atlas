@@ -497,6 +497,28 @@ td {
 .sheet-panel {
   border: 1px solid var(--ink);
 }
+.sheet-actions {
+  position: sticky;
+  right: 0;
+  min-width: 88px;
+  background: #fff;
+  box-shadow: -1px 0 #aeb8b2;
+}
+.remove-row {
+  min-height: 36px;
+  padding: 8px 12px;
+  border: 1px solid #a6342b;
+  background: #fff;
+  color: #8f241d;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+}
+.remove-row:hover,
+.remove-row:focus-visible {
+  background: #8f241d;
+  color: #fff;
+}
 th {
   background: #dfe5df;
   color: #1b2520;
