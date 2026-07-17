@@ -12,6 +12,7 @@ export async function GET() {
     services: {
       database: Boolean(process.env.DATABASE_URL),
       openai: Boolean(process.env.OPENAI_API_KEY),
+      anthropic: Boolean(process.env.ANTHROPIC_API_KEY),
       roboflow: Boolean(process.env.ROBOFLOW_API_KEY && process.env.YOLO_MODEL_ID),
       weather: true,
       fema: true,

@@ -34,11 +34,13 @@ Required for the persistent application:
 
 - `DATABASE_URL`: pooled Neon Postgres connection string
 - `AUTH_SECRET`: at least 32 characters
-- `ROBOFLOW_API_KEY` and `YOLO_MODEL_ID`: package counting
-- `OPENAI_API_KEY`: multimodal product/category interpretation
-- `OPENAI_TEXT_MODEL`: structured warehouse-query interpretation (defaults to `gpt-5-mini`)
+- `OPENAI_API_KEY`: product/category interpretation, warehouse search, and a constrained negotiation explanation
+- `OPENAI_TEXT_MODEL`: text tasks (defaults to `gpt-5-mini`)
+- `ANTHROPIC_API_KEY`: optional two-pass aerial donation counting
+- `ROBOFLOW_API_KEY` and `YOLO_MODEL_ID`: optional hosted YOLO fallback; the bundled ONNX model is used first
 
-ATLAS does not use an LLM to invent quantities or approve transfers. Quantities come from
+ATLAS does not use an LLM to invent quantities or approve transfers. Optional model output
+only explains a proposal; it falls back to deterministic copy if the API is unavailable. Quantities come from
 the ledger, demand comes from approved dispatch history plus live disruption multipliers,
 and route estimates use registered site coordinates. Model-generated search filters are
 constrained by JSON Schema and compiled into parameterized SQL.

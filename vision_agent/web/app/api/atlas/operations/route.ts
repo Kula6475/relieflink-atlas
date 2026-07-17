@@ -9,6 +9,11 @@ import {
   severityMultiplier,
   type Site,
 } from "../../../../lib/atlas/operational";
+import {
+  boundedOffer,
+  explainNegotiation,
+  verifiedSurplus,
+} from "../../../../lib/atlas/negotiation";
 export const maxDuration = 45;
 export async function GET() {
   const session = await getSession();
@@ -20,8 +25,17 @@ export async function GET() {
   try {
     const context = await foodBankContext(session),
       runs =
-        await sql()`SELECT r.*,COALESCE(json_agg(s ORDER BY s.sequence) FILTER(WHERE s.id IS NOT NULL),'[]') steps FROM operational_runs r LEFT JOIN operational_steps s ON s.operational_run_id=r.id WHERE r.site_id=${context.siteId} GROUP BY r.id ORDER BY r.created_at DESC LIMIT 10`;
-    return NextResponse.json({ context, runs });
+        await sql()`SELECT r.*,to_jsonb(c) consignment,COALESCE(json_agg(s ORDER BY s.sequence) FILTER(WHERE s.id IS NOT NULL),'[]') steps FROM operational_runs r LEFT JOIN operational_steps s ON s.operational_run_id=r.id LEFT JOIN operational_consignments c ON c.operational_run_id=r.id WHERE r.site_id=${context.siteId} GROUP BY r.id,c.id ORDER BY r.created_at DESC LIMIT 10`;
+    return NextResponse.json({
+      context,
+      runs,
+      services: {
+        openai: Boolean(process.env.OPENAI_API_KEY),
+        weather: true,
+        fema: true,
+        database: Boolean(process.env.DATABASE_URL),
+      },
+    });
   } catch (error) {
     return NextResponse.json(
       {
@@ -41,19 +55,22 @@ export async function POST() {
   try {
     const context = await foodBankContext(session);
     const siteRows =
-        await sql()`SELECT id,name,county,state,latitude,longitude FROM sites WHERE id=${context.siteId}`,
+        await sql()`SELECT s.id,s.name,s.county,s.state,s.latitude,s.longitude,s.safety_stock_policy,a.name agent_name FROM sites s LEFT JOIN agents a ON a.site_id=s.id AND a.agent_type='site' AND a.active=true WHERE s.id=${context.siteId}`,
       site = siteRows[0] as unknown as Site;
     if (!site) throw new Error("Site not found");
     const [disruptions, inventory, history, network] = await Promise.all([
       fetchDisruptions(site),
       sql()`SELECT category,sum(quantity)::float quantity FROM inventory_items WHERE site_id=${context.siteId} AND condition='good' GROUP BY category`,
       sql()`SELECT category,date_trunc('day',created_at) AS demand_day,sum(quantity)::float quantity FROM inventory_transactions WHERE site_id=${context.siteId} AND direction='out' AND approval_status='approved' AND created_at>now()-interval '30 days' GROUP BY category,date_trunc('day',created_at) ORDER BY demand_day`,
-      sql()`SELECT s.id,s.name,s.county,s.state,s.latitude,s.longitude,i.category,sum(i.quantity)::float quantity FROM sites s JOIN inventory_items i ON i.site_id=s.id AND i.condition='good' WHERE s.id<>${context.siteId} GROUP BY s.id,i.category`,
+      sql()`SELECT s.id,s.name,s.county,s.state,s.latitude,s.longitude,s.organization_id,s.safety_stock_policy,i.category,sum(i.quantity)::float quantity,COALESCE(r.reserved,0)::float reserved,a.name agent_name FROM sites s JOIN inventory_items i ON i.site_id=s.id AND i.condition='good' LEFT JOIN agents a ON a.site_id=s.id AND a.agent_type='site' AND a.active=true LEFT JOIN(SELECT site_id,category,sum(quantity)::float reserved FROM(SELECT site_id,category,quantity FROM inventory_reservations WHERE status IN('provisional','active') UNION ALL SELECT site_id,category,quantity FROM inventory_transactions WHERE direction='hold' AND approval_status='approved' AND source='atlas-interbank') commitments GROUP BY site_id,category)r ON r.site_id=s.id AND r.category=i.category WHERE s.id<>${context.siteId} GROUP BY s.id,i.category,r.reserved,a.name`,
     ]);
     const multiplier = severityMultiplier(disruptions.events),
       categories = new Set([
         ...inventory.map((x) => String(x.category)),
         ...history.map((x) => String(x.category)),
+        ...Object.keys(
+          (siteRows[0].safety_stock_policy as Record<string, number>) || {},
+        ),
       ]);
     const forecasts = [...categories]
       .map((category) => {
@@ -63,12 +80,20 @@ export async function POST() {
           model = forecastDemand(h, multiplier),
           onHand = Number(
             inventory.find((x) => x.category === category)?.quantity || 0,
-          );
+          ),
+          safetyStock = Number(
+            ((siteRows[0].safety_stock_policy as Record<string, number>) || {})[
+              category
+            ] || 0,
+          ),
+          target = Math.max(model.forecast, safetyStock);
         return {
           category,
           onHand,
+          safetyStock,
+          target,
           ...model,
-          shortage: Math.max(0, model.forecast - onHand),
+          shortage: Math.max(0, target - onHand),
         };
       })
       .sort((a, b) => b.shortage - a.shortage);
@@ -93,17 +118,33 @@ export async function POST() {
           latitude: Number(x.latitude),
           longitude: Number(x.longitude),
         };
-        const available = Math.max(0, Math.floor(Number(x.quantity) * 0.75));
-        return { ...source, available, distance: haversine(source, site) };
+        const safetyStock = Number(
+            ((x.safety_stock_policy as Record<string, number>) || {})[
+              need.category
+            ] || 0,
+          ),
+          reserved = Number(x.reserved || 0),
+          available = verifiedSurplus(
+            Number(x.quantity),
+            safetyStock,
+            reserved,
+          );
+        return {
+          ...source,
+          organizationId: String(x.organization_id),
+          agentName: String(x.agent_name || `${x.name} Inventory Agent`),
+          available,
+          safetyStock,
+          reserved,
+          distance: haversine(source, site),
+        };
       })
       .filter((x) => x.available > 0)
       .sort((a, b) => a.distance - b.distance);
     const source = candidates[0] || null,
       requested = need.shortage,
-      counter = source
-        ? Math.min(source.available, Math.ceil(requested * 0.75))
-        : 0,
-      accepted = counter >= Math.ceil(requested * 0.6),
+      counter = source ? boundedOffer(requested, source.available) : 0,
+      accepted = counter > 0,
       transport =
         source && counter
           ? {
@@ -119,7 +160,28 @@ export async function POST() {
               ),
               capacityStatus: "requires logistics confirmation",
             }
-          : null;
+          : null,
+      requestingAgent = String(
+        siteRows[0].agent_name || `${site.name} Inventory Agent`,
+      ),
+      negotiation = source
+        ? await explainNegotiation({
+            requestingSite: site.name,
+            requestingAgent,
+            donorSite: source.name,
+            donorAgent: source.agentName,
+            category: need.category,
+            requested,
+            offered: counter,
+            verifiedSurplus: source.available,
+            safetyStock: source.safetyStock,
+            distanceMiles: Number(source.distance.toFixed(1)),
+          })
+        : {
+            mode: "rules" as const,
+            explanation:
+              "No partner branch has verified surplus above safety stock for this category.",
+          };
     const output = await withTransaction(async (c) => {
       const run = (
         await c.query(
@@ -135,9 +197,9 @@ export async function POST() {
       const steps = [
         {
           agent: "Inventory Agent",
-          input: { siteId: site.id },
+          input: { siteId: site.id, agentName: requestingAgent },
           output: { categories: forecasts },
-          explanation: `Audited ${inventory.length} inventory categories against approved dispatch history.`,
+          explanation: `${requestingAgent} audited ${inventory.length} categories against approved dispatch history and site safety stock.`,
           approval: false,
         },
         {
@@ -165,7 +227,7 @@ export async function POST() {
             acceptedByPolicy: accepted,
           },
           explanation: source
-            ? `${site.name} requested ${requested}; ${source.name} countered with ${counter}. ${accepted ? "Counter meets the 60% acceptance threshold." : "Escalated because the counter is insufficient."}`
+            ? negotiation.explanation
             : "No eligible partner surplus was found.",
           approval: Boolean(counter),
         },
@@ -241,6 +303,20 @@ export async function POST() {
             transport.estimatedMinutes,
           ],
         );
+      if (transport && source)
+        await c.query(
+          "INSERT INTO operational_consignments(operational_run_id,source_site_id,destination_site_id,category,requested_quantity,offered_quantity,negotiation_mode,negotiation_explanation) VALUES($1,$2,$3,$4,$5,$6,$7,$8)",
+          [
+            run.id,
+            source.id,
+            site.id,
+            need.category,
+            requested,
+            counter,
+            negotiation.mode,
+            negotiation.explanation,
+          ],
+        );
       await c.query(
         "UPDATE operational_runs SET summary=$2,completed_at=now() WHERE id=$1",
         [
@@ -251,6 +327,7 @@ export async function POST() {
             requested,
             counteroffer: counter,
             transport,
+            negotiationMode: negotiation.mode,
           },
         ],
       );
@@ -263,6 +340,7 @@ export async function POST() {
           requested,
           counteroffer: counter,
           transport,
+          negotiationMode: negotiation.mode,
         },
       };
     });

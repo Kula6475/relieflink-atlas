@@ -4,7 +4,6 @@ import { FormEvent, useEffect, useState } from "react";
 import { VisionIntake } from "./vision-intake";
 import { WarehouseSearch } from "./warehouse-search";
 import { AtlasOperations } from "./atlas-operations";
-import { JudgeDemo } from "./judge-demo";
 import { apiJson } from "./client-api";
 const FoodBankMap = dynamic(() => import("./food-bank-map"), { ssr: false });
 type User = { displayName: string; email: string };
@@ -43,7 +42,7 @@ type Item = {
   intake_method: string;
   row_version: number;
 };
-type View = "overview" | "demo" | "map" | "adjustment" | "inventory" | "agent";
+type View = "overview" | "map" | "adjustment" | "inventory" | "agent";
 const columns: [keyof Item, string][] = [
   ["product_name", "Food item"],
   ["brand", "Brand"],
@@ -167,7 +166,6 @@ export function AtlasDashboard({ initialUser }: { initialUser: User | null }) {
           {(
             [
               ["overview", "Overview", "⌂"],
-              ["demo", "Run Judge Demo", "▶"],
               ["map", "Food bank map", "⌖"],
               ["adjustment", "Inventory adjustment", "◉"],
               ["inventory", "Inventory spreadsheet", "▦"],
@@ -207,7 +205,6 @@ export function AtlasDashboard({ initialUser }: { initialUser: User | null }) {
               {
                 {
                   overview: "Operations overview",
-                  demo: "ATLAS judge demo",
                   map: "Shared food bank network",
                   adjustment: "Inventory adjustment",
                   inventory: "Inventory spreadsheet",
@@ -250,6 +247,19 @@ export function AtlasDashboard({ initialUser }: { initialUser: User | null }) {
               <Metric label="Expiring this week" value={expiring} />
               <Metric label="Registered food banks" value={banks.length} />
             </section>
+            <section className="coordination-entry panel">
+              <div>
+                <p className="eyebrow">Live inter-food-bank coordination</p>
+                <h2>Move verified surplus before ordering more</h2>
+                <p>
+                  Inventory agents detect shortages and safe partner surplus,
+                  negotiate a bounded consignment, and wait for your
+                  approval—reducing bullwhip amplification, avoidable waste, and
+                  excess purchasing.
+                </p>
+              </div>
+              <AtlasOperations />
+            </section>
             <div className="two-column">
               <section className="panel">
                 <Head kicker="Shared network" title="Nearby food banks" />
@@ -277,8 +287,9 @@ export function AtlasDashboard({ initialUser }: { initialUser: User | null }) {
                   title={context?.agentName || "Inventory agent"}
                 />
                 <p className="muted">
-                  Monitors expirations, low stock, and missing locations. It
-                  recommends; your team decides.
+                  Monitors expirations, low stock, missing locations, and
+                  branch-level shortages. It can ask partner agents for verified
+                  surplus; your team approves every consignment.
                 </p>
                 <div className="authority">
                   <strong>Human authority enforced</strong>
@@ -312,7 +323,6 @@ export function AtlasDashboard({ initialUser }: { initialUser: User | null }) {
             <FoodBankMap foodBanks={banks} />
           </section>
         )}
-        {view === "demo" && <JudgeDemo />}
         {view === "adjustment" && (
           <section>
             <div className="intake-tabs">
@@ -541,7 +551,6 @@ function Head({ kicker, title }: { kicker: string; title: string }) {
           <h2>{title}</h2>
         </div>
       </div>
-      {kicker === "Human-governed agent" && <AtlasOperations />}
     </>
   );
 }
