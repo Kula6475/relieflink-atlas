@@ -2,7 +2,9 @@ import OpenAI from "openai";
 import Anthropic from "@anthropic-ai/sdk";
 import { config } from "dotenv";
 import { resolve } from "node:path";
+import { existsSync } from "node:fs";
 import sharp from "sharp";
+import * as ort from "onnxruntime-node";
 
 const localEnvironment = {
   ...(config({ path: resolve(process.cwd(), "../../.env"), override: false, quiet: true }).parsed ?? {}),
@@ -213,6 +215,55 @@ async function runRoboflow(bytes: Buffer): Promise<{ predictions: Detection[]; w
   };
 }
 
+function boxIoU(first: Detection, second: Detection) {
+  const left = Math.max(first.x - first.width / 2, second.x - second.width / 2);
+  const top = Math.max(first.y - first.height / 2, second.y - second.height / 2);
+  const right = Math.min(first.x + first.width / 2, second.x + second.width / 2);
+  const bottom = Math.min(first.y + first.height / 2, second.y + second.height / 2);
+  const intersection = Math.max(0, right - left) * Math.max(0, bottom - top);
+  const union = first.width * first.height + second.width * second.height - intersection;
+  return union ? intersection / union : 0;
+}
+
+async function runLocalCannedGoods(bytes: Buffer): Promise<{ predictions: Detection[]; width: number; height: number }> {
+  const metadata = await sharp(bytes).metadata();
+  const width = metadata.width ?? 900;
+  const height = metadata.height ?? 600;
+  const size = 640;
+  const { data } = await sharp(bytes).resize(size, size, { fit: "fill" }).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const input = new Float32Array(3 * size * size);
+  for (let i = 0; i < size * size; i += 1) {
+    input[i] = data[i * 3] / 255;
+    input[size * size + i] = data[i * 3 + 1] / 255;
+    input[2 * size * size + i] = data[i * 3 + 2] / 255;
+  }
+  const modelPath = resolve(process.cwd(), "models/canned_goods.onnx");
+  const session = await ort.InferenceSession.create(modelPath);
+  const output = await session.run({ [session.inputNames[0]]: new ort.Tensor("float32", input, [1, 3, size, size]) });
+  const values = output[session.outputNames[0]].data as Float32Array;
+  const candidates: Detection[] = [];
+  const confidenceThreshold = Number(setting("YOLO_CONFIDENCE") ?? "0.25");
+  for (let index = 0; index < 8400; index += 1) {
+    const confidence = values[4 * 8400 + index];
+    if (confidence < confidenceThreshold) continue;
+    const x = values[index] * width / size;
+    const y = values[8400 + index] * height / size;
+    const boxWidth = values[2 * 8400 + index] * width / size;
+    const boxHeight = values[3 * 8400 + index] * height / size;
+    candidates.push({ x, y, width: boxWidth, height: boxHeight, confidence, className: "canned_goods" });
+  }
+  const kept: Detection[] = [];
+  for (const candidate of candidates.sort((a, b) => b.confidence - a.confidence)) {
+    if (!kept.some((existing) => boxIoU(existing, candidate) >= 0.45)) kept.push(candidate);
+  }
+  return { width, height, predictions: kept.slice(0, 300) };
+}
+
+async function runDetector(bytes: Buffer) {
+  if (existsSync(resolve(process.cwd(), "models/canned_goods.onnx"))) return runLocalCannedGoods(bytes);
+  return runRoboflow(bytes);
+}
+
 async function classifyWithVision(imageDataUrl: string) {
   const apiKey = setting("OPENAI_API_KEY");
   if (!apiKey) return null;
@@ -243,16 +294,17 @@ export async function analyzeStillImage(input: {
 }): Promise<VisionResult> {
   const base64 = input.bytes.toString("base64");
   const imageDataUrl = `data:${input.contentType};base64,${base64}`;
-  const missing = [
-      !setting("ROBOFLOW_API_KEY") ? "ROBOFLOW_API_KEY" : null,
-      !setting("YOLO_MODEL_ID") ? "YOLO_MODEL_ID" : null,
-    ].filter(Boolean);
+  const localModel = existsSync(resolve(process.cwd(), "models/canned_goods.onnx"));
+  const missing = localModel ? [] : [
+    !setting("ROBOFLOW_API_KEY") ? "ROBOFLOW_API_KEY" : null,
+    !setting("YOLO_MODEL_ID") ? "YOLO_MODEL_ID" : null,
+  ].filter(Boolean);
   if (missing.length) {
       throw new Error(
         `Cloud detection was selected, but ${missing.join(" and ")} is missing. Add it to the repository .env or vision_agent/web/.env.local, then restart Next.js.`,
       );
   }
-  const result = await runRoboflow(input.bytes);
+  const result = await runDetector(input.bytes);
   const detections=result.predictions,imageWidth=result.width,imageHeight=result.height;
   const claude = await countWithClaude(imageDataUrl);
   const llm = await classifyWithVision(imageDataUrl);
@@ -283,7 +335,7 @@ export async function analyzeStillImage(input: {
     imageDataUrl,
     imageWidth,
     imageHeight,
-    yoloModel: String(setting("YOLO_MODEL_ID")),
+    yoloModel: localModel ? "canned_goods.onnx" : String(setting("YOLO_MODEL_ID")),
     detections,
     visibleObjectCount: visibleCount,
     averageConfidence: usedDetectorFallback ? Math.min(0.59, detections.reduce((sum, item) => sum + item.confidence, 0) / detectorCount) : claude.confidence,
@@ -292,7 +344,7 @@ export async function analyzeStillImage(input: {
     countMethod: "claude_two_pass",
     countNote: usedDetectorFallback
       ? `Claude returned an all-zero tally, so the UI shows ${detectorCount} visible detector packages as a conservative fallback. Confirm or correct the quantity before approval. ${claude.count.notes}`
-      : `Claude two-pass count: ${claude.count.notes || "two independent region-by-region counts"}. Bounding boxes are Roboflow overlays and may not equal the Claude count.`,
+      : `Claude two-pass count: ${claude.count.notes || "two independent region-by-region counts"}. ${localModel ? "Green boxes are from the trained canned-goods YOLO model and mark visible cans only." : "Bounding boxes are Roboflow overlays and may not equal the Claude count."}`,
     mode:"cloud",
   };
 }
