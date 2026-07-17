@@ -561,6 +561,35 @@ th {
     flex-direction: column;
   }
 }
+.review-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+}
+.review-controls label {
+  color: #d4e5df;
+  font-size: 10px;
+  font-weight: 750;
+}
+.review-controls input {
+  display: block;
+  width: 84px;
+  margin-top: 5px;
+  padding: 10px;
+  border: 1px solid #799087;
+  background: #fff;
+  color: var(--ink);
+}
+@media (max-width: 760px) {
+  .review-controls {
+    width: 100%;
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .review-controls input {
+    width: 100%;
+  }
+}
 
 .shortage-overlay {
   position: fixed;
