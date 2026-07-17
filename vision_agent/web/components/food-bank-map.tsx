@@ -30,26 +30,44 @@ const icon = L.divIcon({
 function Fit({ banks }: { banks: Bank[] }) {
   const map = useMap();
   useEffect(() => {
-    if (banks.length)
-      map.fitBounds(
-        banks.map(
-          (bank) =>
-            [Number(bank.latitude), Number(bank.longitude)] as [number, number],
-        ),
-        { padding: [45, 45], maxZoom: 11 },
+    const points = banks
+      .map(
+        (bank) =>
+          [Number(bank.latitude), Number(bank.longitude)] as [number, number],
+      )
+      .filter(
+        ([latitude, longitude]) =>
+          Number.isFinite(latitude) && Number.isFinite(longitude),
       );
+    const refresh = () => map.invalidateSize({ pan: false });
+    const frame = requestAnimationFrame(refresh);
+    const timer = window.setTimeout(refresh, 250);
+    if (points.length)
+      map.fitBounds(points, { padding: [45, 45], maxZoom: 11 });
+    const observer = new ResizeObserver(refresh);
+    observer.observe(map.getContainer());
+    return () => {
+      cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+      observer.disconnect();
+    };
   }, [banks, map]);
   return null;
 }
 export default function FoodBankMap({ foodBanks }: { foodBanks: Bank[] }) {
+  const visibleBanks = foodBanks.filter(
+    (bank) =>
+      Number.isFinite(Number(bank.latitude)) &&
+      Number.isFinite(Number(bank.longitude)),
+  );
   return (
     <MapContainer center={[37.77, -122.25]} zoom={9} className="network-map">
       <TileLayer
         attribution="&copy; OpenStreetMap contributors"
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
-      <Fit banks={foodBanks} />
-      {foodBanks.map((bank) => (
+      <Fit banks={visibleBanks} />
+      {visibleBanks.map((bank) => (
         <Marker
           key={bank.id}
           position={[Number(bank.latitude), Number(bank.longitude)]}

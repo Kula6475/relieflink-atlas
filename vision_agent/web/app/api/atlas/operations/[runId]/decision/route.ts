@@ -24,23 +24,36 @@ export async function POST(
     const input = Input.parse(await request.json()),
       { runId } = await params;
     const run = await withTransaction(async (client) => {
-      const found = (
+      const lockedRun = (
         await client.query(
-          "SELECT r.*,c.id consignment_id,c.source_site_id,c.destination_site_id,c.category,c.offered_quantity,c.status consignment_status,s.organization_id source_organization_id,s.safety_stock_policy FROM operational_runs r LEFT JOIN operational_consignments c ON c.operational_run_id=r.id LEFT JOIN sites s ON s.id=c.source_site_id WHERE r.id=$1 AND r.site_id=$2 FOR UPDATE OF r,c",
+          "SELECT * FROM operational_runs WHERE id=$1 AND site_id=$2 FOR UPDATE",
           [runId, context.siteId],
         )
       ).rows[0];
-      if (!found) throw new Error("ATLAS run not found");
-      if (!found.consignment_id)
-        throw new Error("This run has no proposed consignment");
+      if (!lockedRun) throw new Error("ATLAS run not found");
+      const consignment = (
+        await client.query(
+          "SELECT c.id consignment_id,c.source_site_id,c.destination_site_id,c.category,c.offered_quantity,c.status consignment_status,s.organization_id source_organization_id,s.safety_stock_policy FROM operational_consignments c JOIN sites s ON s.id=c.source_site_id WHERE c.operational_run_id=$1 FOR UPDATE OF c",
+          [runId],
+        )
+      ).rows[0];
+      if (!consignment) throw new Error("This run has no proposed consignment");
+      const found = { ...lockedRun, ...consignment };
       if (found.consignment_status !== "proposed") return found;
       if (input.decision === "approved") {
-        const position = (
+        await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+          `atlas:${found.source_site_id}:${String(found.category).toLowerCase()}`,
+        ]);
+        const inventoryRows = (
             await client.query(
-              "SELECT COALESCE(sum(quantity),0)::float on_hand FROM inventory_items WHERE site_id=$1 AND category=$2 AND condition='good'",
+              "SELECT quantity FROM inventory_items WHERE site_id=$1 AND lower(category)=lower($2) AND condition='good' FOR UPDATE",
               [found.source_site_id, found.category],
             )
-          ).rows[0],
+          ).rows,
+          onHand = inventoryRows.reduce(
+            (sum, row) => sum + Number(row.quantity),
+            0,
+          ),
           safety = Number(
             (found.safety_stock_policy || {})[found.category] || 0,
           ),
@@ -50,10 +63,7 @@ export async function POST(
               [found.source_site_id, found.category],
             )
           ).rows[0],
-          available = Math.max(
-            0,
-            Number(position.on_hand) - safety - Number(reservations.held),
-          );
+          available = Math.max(0, onHand - safety - Number(reservations.held));
         if (Number(found.offered_quantity) > available)
           throw new Error(
             `Partner inventory changed; only ${available} units remain above safety stock`,

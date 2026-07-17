@@ -27,8 +27,18 @@ const destinationIcon = L.divIcon({
 function Fit({ coordinates }: { coordinates: [number, number][] }) {
   const map = useMap();
   useEffect(() => {
+    const refresh = () => map.invalidateSize({ pan: false });
+    const frame = requestAnimationFrame(refresh);
+    const timer = window.setTimeout(refresh, 250);
     if (coordinates.length > 1)
       map.fitBounds(coordinates, { padding: [28, 28], maxZoom: 12 });
+    const observer = new ResizeObserver(refresh);
+    observer.observe(map.getContainer());
+    return () => {
+      cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+      observer.disconnect();
+    };
   }, [coordinates, map]);
   return null;
 }
@@ -42,23 +52,31 @@ export default function ReallocationMap({
   from: string;
   to: string;
 }) {
-  if (coordinates.length < 2) return null;
+  const validCoordinates = coordinates.filter(
+    ([latitude, longitude]) =>
+      Number.isFinite(Number(latitude)) && Number.isFinite(Number(longitude)),
+  );
+  if (validCoordinates.length < 2) return null;
   return (
-    <MapContainer center={coordinates[0]} zoom={9} className="reallocation-map">
+    <MapContainer
+      center={validCoordinates[0]}
+      zoom={9}
+      className="reallocation-map"
+    >
       <TileLayer
         attribution="&copy; OpenStreetMap contributors"
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
-      <Fit coordinates={coordinates} />
+      <Fit coordinates={validCoordinates} />
       <Polyline
-        positions={coordinates}
+        positions={validCoordinates}
         pathOptions={{ color: "#087f70", weight: 5 }}
       />
-      <Marker position={coordinates[0]} icon={sourceIcon}>
+      <Marker position={validCoordinates[0]} icon={sourceIcon}>
         <Popup>Source: {from}</Popup>
       </Marker>
       <Marker
-        position={coordinates[coordinates.length - 1]}
+        position={validCoordinates[validCoordinates.length - 1]}
         icon={destinationIcon}
       >
         <Popup>Destination: {to}</Popup>
