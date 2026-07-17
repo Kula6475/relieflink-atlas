@@ -11,13 +11,14 @@
     "db:migrate": "tsx scripts/migrate.ts"
   },
   "dependencies": {
-    "@neondatabase/serverless": "1.1.0",
     "@anthropic-ai/sdk": "^0.61.0",
+    "@neondatabase/serverless": "1.1.0",
     "bcryptjs": "3.0.2",
     "dotenv": "^17.4.2",
     "jose": "6.1.3",
     "leaflet": "^1.9.4",
     "next": "16.2.10",
+    "onnxruntime-node": "^1.27.0",
     "openai": "6.47.0",
     "react": "19.2.4",
     "react-dom": "19.2.4",
@@ -26,8 +27,8 @@
     "zod": "4.3.6"
   },
   "devDependencies": {
-    "@types/leaflet": "^1.9.21",
     "@types/bcryptjs": "2.4.6",
+    "@types/leaflet": "^1.9.21",
     "@types/node": "24.10.13",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
