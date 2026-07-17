@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import Anthropic from "@anthropic-ai/sdk";
 import { config } from "dotenv";
 import { resolve } from "node:path";
 import sharp from "sharp";
@@ -38,10 +39,48 @@ export type VisionResult = {
     uncertainty: string | null;
   };
   disagreement: string | null;
-  countMethod: "tiled_package_detection";
+  countMethod: "claude_two_pass";
   countNote: string;
   mode: "cloud";
 };
+
+const CATEGORIES = ["canned_goods", "produce", "dairy", "dry_goods"] as const;
+type ClaudeCount = { counts: Record<(typeof CATEGORIES)[number], number>; notes: string };
+
+const CLAUDE_COUNT_PROMPT = `You count food-bank inventory in a still image. Scan systematically left-to-right and front-to-back, region by region. Count separate items even when partially occluded if a rim, lid, edge, or side identifies the item. Do not count the same item twice. Describe your regions and running tally first, then end with a JSON object containing counts for exactly canned_goods, produce, dairy, and dry_goods plus notes. Do not count sealed cartons unless visible labels or packaging support an estimate; flag uncertainty in notes.`;
+
+function parseClaudeCount(text: string): ClaudeCount {
+  const match = text.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error("Claude did not return a count record");
+  const parsed = JSON.parse(match[0]) as { counts?: Record<string, unknown>; notes?: string };
+  const counts = Object.fromEntries(CATEGORIES.map((category) => [category, Math.max(0, Math.round(Number(parsed.counts?.[category] ?? 0)))])) as ClaudeCount["counts"];
+  return { counts, notes: parsed.notes ?? "" };
+}
+
+async function countWithClaude(imageDataUrl: string): Promise<{ count: ClaudeCount; confidence: number }> {
+  const apiKey = setting("ANTHROPIC_API_KEY");
+  if (!apiKey) throw new Error("ANTHROPIC_API_KEY is not configured for Claude counting");
+  const client = new Anthropic({ apiKey });
+  const image = imageDataUrl.split(",")[1];
+  const mediaType = imageDataUrl.match(/^data:(.*?);/)?.[1] ?? "image/jpeg";
+  async function pass(independent: boolean) {
+    const response = await client.messages.create({
+      model: setting("CLAUDE_MODEL") ?? "claude-opus-4-8",
+      max_tokens: 1800,
+      messages: [{ role: "user", content: [
+        { type: "image", source: { type: "base64", media_type: mediaType as "image/jpeg", data: image } },
+        { type: "text", text: `${CLAUDE_COUNT_PROMPT}${independent ? " Perform an independent recount; do not copy a prior answer." : ""}` },
+      ] }],
+    });
+    return parseClaudeCount(response.content.filter((block) => block.type === "text").map((block) => block.text).join("\n"));
+  }
+  const [first, second] = await Promise.all([pass(false), pass(true)]);
+  const deltas = CATEGORIES.map((category) => Math.abs(first.counts[category] - second.counts[category]));
+  const confidence = deltas.length ? deltas.reduce((sum, delta, index) => sum + Math.max(0, 1 - delta / Math.max(first.counts[CATEGORIES[index]], second.counts[CATEGORIES[index]], 1)), 0) / deltas.length : 0;
+  const counts = Object.fromEntries(CATEGORIES.map((category) => [category, Math.round((first.counts[category] + second.counts[category]) / 2)])) as ClaudeCount["counts"];
+  const disagreement = CATEGORIES.filter((category) => first.counts[category] !== second.counts[category]).map((category) => `${category} differed (${first.counts[category]} vs ${second.counts[category]})`).join("; ");
+  return { count: { counts, notes: [first.notes, second.notes, disagreement && `Independent-pass disagreement: ${disagreement}`].filter(Boolean).join(" ") }, confidence };
+}
 
 type RoboflowResponse = {
   image?: { width?: number; height?: number };
@@ -182,7 +221,9 @@ export async function analyzeStillImage(input: {
   }
   const result = await runRoboflow(input.bytes);
   const detections=result.predictions,imageWidth=result.width,imageHeight=result.height;
+  const claude = await countWithClaude(imageDataUrl);
   const llm = await classifyWithVision(imageDataUrl);
+  const totalClaudeCount = Object.values(claude.count.counts).reduce((sum, count) => sum + count, 0);
   const classification = llm ? {
     product: llm.product ?? "Unconfirmed food package",
     category: llm.category ?? "uncategorized",
@@ -191,12 +232,12 @@ export async function analyzeStillImage(input: {
     confidence: llm.confidence ?? 0.5,
     uncertainty: llm.uncertainty ?? null,
   } : {
-    product: "Unclassified detected package",
-    category: "operator_review",
+    product: "Detected food packages",
+    category: "mixed_food_packages",
     packaging: "unknown",
     source: "operator_required" as const,
     confidence: 0,
-    uncertainty: "Roboflow counted visible packages, but OPENAI_API_KEY is not configured for product/category classification. An operator must classify them.",
+    uncertainty: "Claude counted visible items, but product classification needs operator confirmation.",
   };
   const classSet = new Set(detections.map((item) => item.className.toLowerCase()));
   const disagreement = classSet.size > 1
@@ -208,14 +249,12 @@ export async function analyzeStillImage(input: {
     imageHeight,
     yoloModel: String(setting("YOLO_MODEL_ID")),
     detections,
-    visibleObjectCount: detections.length,
-    averageConfidence: detections.length
-      ? detections.reduce((sum, item) => sum + item.confidence, 0) / detections.length
-      : 0,
+    visibleObjectCount: totalClaudeCount,
+    averageConfidence: claude.confidence,
     classification,
     disagreement,
-    countMethod: "tiled_package_detection",
-    countNote: "Hosted web count from overlapping Roboflow package-detection tiles; this is separate from the Python agent's two-pass Claude counter. Closed cartons and hidden items require a label, packing slip, or human confirmation.",
+    countMethod: "claude_two_pass",
+    countNote: `Claude two-pass count: ${claude.count.notes || "two independent region-by-region counts"}. Bounding boxes are Roboflow overlays and may not equal the Claude count.`,
     mode:"cloud",
   };
 }
