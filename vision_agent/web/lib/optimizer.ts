@@ -2,7 +2,7 @@ import type { Allocation, AllocationInput } from "./domain";
 
 /** Deterministic minimum-cost allocation fallback for the hosted MVP.
  * Sources are sorted by distance and feasible capacity. The same validated payload can
- * be sent to the Python OR-Tools service; this fallback keeps synthetic demos available.
+ * be sent to the Python OR-Tools service; this fallback keeps development deterministic.
  */
 export function allocateMinimumCost(
   requestedQuantity: number,

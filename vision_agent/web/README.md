@@ -1,56 +1,48 @@
 # ReliefLink hosted application
 
-This directory is the primary hosted Next.js application and the ATLAS MVP. Neon
-Postgres is its only persistent source of truth. The root FastAPI/SQLite application is
-retained as a prototype and as the stateless OR-Tools/Claude service during migration.
+This is the production Next.js application. Neon Postgres is the shared source of
+truth across authorized devices and food-bank accounts.
 
-## Local key-free demo
+## Capabilities
+
+- Food-bank administrator registration creates a site, account, map listing, and agent.
+- Inventory Adjustment combines phone-camera/photo analysis and CSV import in one tab.
+- Tiled YOLO/Roboflow inference counts visible packages; the multimodal model identifies
+  food properties. An operator edits and approves the result before it enters inventory.
+- All inventory appears in one editable spreadsheet with optimistic concurrency and an
+  audit trail, including `vision` and `csv` intake provenance.
+- Registered food banks appear on the network map while item-level ledgers stay scoped.
+- Each food-bank agent monitors expiration, low stock, and missing locations. It cannot
+  place orders or make commitments without a human.
+
+## Configuration
 
 ```bash
 cd vision_agent/web
 npm install
 cp .env.example .env.local
+npm run db:migrate
 npm run dev
 ```
 
-Keep `ATLAS_SYNTHETIC_MODE=true`, then open <http://localhost:3000>. The disruption,
-request, offers, logistics validation, allocation, four human approvals, reservation,
-and audit timeline work without Neon or API keys. Image review also has a synthetic
-package-detection path.
+Required for the persistent application:
 
-## Persistent Neon setup
+- `DATABASE_URL`: pooled Neon Postgres connection string
+- `AUTH_SECRET`: at least 32 characters
+- `ROBOFLOW_API_KEY` and `YOLO_MODEL_ID`: package counting
+- `OPENAI_API_KEY`: multimodal product/category interpretation
 
-1. Create a Neon project and copy its pooled connection string to `DATABASE_URL`.
-2. Generate `AUTH_SECRET` with `openssl rand -base64 32`.
-3. Set `ATLAS_SYNTHETIC_MODE=false`.
-4. Run `npm run db:migrate && npm run db:seed`.
-5. Start the app and sign in using `ATLAS_DEMO_ADMIN_EMAIL` and
-   `ATLAS_DEMO_ADMIN_PASSWORD` from your local environment.
-
-The migration is additive. Never reset the hosted database to apply it.
-
-## Optional services
-
-Run `uvicorn ledger.main:app --reload` from the repository root to expose the stateless
-OR-Tools endpoint and Claude explanation/follow-up node. Both have key-free fallbacks.
-For cloud still-image analysis, configure Roboflow for package-level detection and
-OpenAI for label/category interpretation. A generic detector is not treated as a SKU
-classifier.
-
-The demo defaults to the public `supermarket-shelves-7eum5/2` package detector with
-`YOLO_COUNT_CLASSES=Product`. Replace it with a validated or fine-tuned food-bank model
-for production; the public model is only a package-level MVP baseline.
+The database migrations are additive and safe to rerun.
 
 ## Vercel
 
-Create or update a Vercel project with **Root Directory** set to `vision_agent/web`.
-Add the environment variables from `.env.example`; do not upload or commit `.env`.
-Run Neon migrations separately before switching the deployment out of synthetic mode.
+Use `vision_agent/web` as the Root Directory. Configure the environment variables above,
+run `npm run db:migrate` once against production Neon, and deploy the `main` branch.
 
 ## Checks
 
 ```bash
-npm test
 npm run typecheck
+npm test
 npm run build
 ```

@@ -38,31 +38,10 @@ export type VisionResult = {
     uncertainty: string | null;
   };
   disagreement: string | null;
-  countMethod: "tiled_package_detection" | "synthetic_demo";
+  countMethod: "tiled_package_detection";
   countNote: string;
-  mode: "cloud" | "synthetic";
+  mode: "cloud";
 };
-
-export function shouldUseSyntheticMode(requestedMode: string | null, defaultSynthetic: boolean) {
-  if (requestedMode === "true") return true;
-  if (requestedMode === "false") return false;
-  return defaultSynthetic;
-}
-
-function syntheticDetections(count = 100): Detection[] {
-  return Array.from({ length: count }, (_, index) => {
-    const column = index % 10;
-    const row = Math.floor(index / 10);
-    return {
-      x: 45 + column * 90,
-      y: 28 + row * 58,
-      width: 50,
-      height: 45,
-      confidence: 0.88 + (index % 5) * 0.018,
-      className: "package",
-    };
-  });
-}
 
 type RoboflowResponse = {
   image?: { width?: number; height?: number };
@@ -189,33 +168,21 @@ async function classifyWithVision(imageDataUrl: string) {
 export async function analyzeStillImage(input: {
   bytes: Buffer;
   contentType: string;
-  synthetic: boolean;
 }): Promise<VisionResult> {
   const base64 = input.bytes.toString("base64");
   const imageDataUrl = `data:${input.contentType};base64,${base64}`;
-  let detections: Detection[];
-  let imageWidth = 900;
-  let imageHeight = 600;
-  let mode: "cloud" | "synthetic" = "cloud";
-  if (input.synthetic) {
-    detections = syntheticDetections();
-    mode = "synthetic";
-  } else {
-    const missing = [
+  const missing = [
       !setting("ROBOFLOW_API_KEY") ? "ROBOFLOW_API_KEY" : null,
       !setting("YOLO_MODEL_ID") ? "YOLO_MODEL_ID" : null,
     ].filter(Boolean);
-    if (missing.length) {
+  if (missing.length) {
       throw new Error(
         `Cloud detection was selected, but ${missing.join(" and ")} is missing. Add it to the repository .env or vision_agent/web/.env.local, then restart Next.js.`,
       );
-    }
-    const result = await runRoboflow(input.bytes);
-    detections = result.predictions;
-    imageWidth = result.width;
-    imageHeight = result.height;
   }
-  const llm = mode === "cloud" ? await classifyWithVision(imageDataUrl) : null;
+  const result = await runRoboflow(input.bytes);
+  const detections=result.predictions,imageWidth=result.width,imageHeight=result.height;
+  const llm = await classifyWithVision(imageDataUrl);
   const classification = llm ? {
     product: llm.product ?? "Unconfirmed food package",
     category: llm.category ?? "uncategorized",
@@ -223,13 +190,6 @@ export async function analyzeStillImage(input: {
     source: "vision_llm" as const,
     confidence: llm.confidence ?? 0.5,
     uncertainty: llm.uncertainty ?? null,
-  } : mode === "synthetic" ? {
-    product: "Demo canned-food package",
-    category: "canned_goods",
-    packaging: "can",
-    source: "operator_required" as const,
-    confidence: 0.72,
-    uncertainty: "Synthetic classification; an operator must confirm the category.",
   } : {
     product: "Unclassified detected package",
     category: "operator_review",
@@ -246,9 +206,7 @@ export async function analyzeStillImage(input: {
     imageDataUrl,
     imageWidth,
     imageHeight,
-    yoloModel: mode === "cloud"
-      ? String(setting("YOLO_MODEL_ID"))
-      : "synthetic-package-counter-v1",
+    yoloModel: String(setting("YOLO_MODEL_ID")),
     detections,
     visibleObjectCount: detections.length,
     averageConfidence: detections.length
@@ -256,10 +214,8 @@ export async function analyzeStillImage(input: {
       : 0,
     classification,
     disagreement,
-    countMethod: mode === "cloud" ? "tiled_package_detection" : "synthetic_demo",
-    countNote: mode === "cloud"
-      ? "Visible package count from overlapping camera tiles. Closed cartons and hidden items require a label, packing slip, or human confirmation."
-      : "Synthetic count for UI testing; replace with a real still-image analysis before recording inventory.",
-    mode,
+    countMethod: "tiled_package_detection",
+    countNote: "Visible package count from overlapping camera tiles. Closed cartons and hidden items require a label, packing slip, or human confirmation.",
+    mode:"cloud",
   };
 }

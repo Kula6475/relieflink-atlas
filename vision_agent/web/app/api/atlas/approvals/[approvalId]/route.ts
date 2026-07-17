@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { decideDemoApproval } from "../../../../../lib/atlas/demo-store";
 import { decidePersistentApproval } from "../../../../../lib/atlas/persistent-approvals";
 import { getSession } from "../../../../../lib/auth";
 
@@ -14,13 +13,8 @@ export async function POST(
   try {
     const body = Decision.parse(await request.json());
     const { approvalId } = await context.params;
-    if (process.env.ATLAS_SYNTHETIC_MODE !== "true" && process.env.DATABASE_URL) {
-      const session = await getSession();
-      if (!session) return NextResponse.json({ error: "Authentication required" }, { status: 401 });
-      const result = await decidePersistentApproval({ approvalId, decision: body.decision, session });
-      return NextResponse.json(result);
-    }
-    return NextResponse.json(decideDemoApproval(approvalId, body.decision));
+    const session=await getSession();if(!session)return NextResponse.json({error:"Authentication required"},{status:401});
+    return NextResponse.json(await decidePersistentApproval({approvalId,decision:body.decision,session}));
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Invalid decision" },

@@ -33,7 +33,7 @@ export type AtlasProposal = {
 };
 
 export type AtlasDashboardState = {
-  mode: "synthetic" | "persistent";
+  mode: "persistent";
   inventoryIntake: {
     status: "draft" | "pending" | "approved";
     site: string;

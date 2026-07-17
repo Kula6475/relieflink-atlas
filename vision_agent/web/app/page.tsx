@@ -1,11 +1,1 @@
-import { AtlasDashboard } from "../components/atlas-dashboard";
-import { getDemoState } from "../lib/atlas/demo-store";
-
-export default function Home() {
-  const initialState =
-    process.env.ATLAS_SYNTHETIC_MODE === "true" || !process.env.DATABASE_URL
-      ? getDemoState()
-      : null;
-
-  return <AtlasDashboard initialState={initialState} />;
-}
+import {AtlasDashboard} from "../components/atlas-dashboard";import {getSession} from "../lib/auth";export default async function Home(){const session=await getSession();return <AtlasDashboard initialUser={session?{displayName:session.displayName,email:session.email}:null}/>}

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { analyzeStillImage, shouldUseSyntheticMode } from "../../../../lib/vision";
+import { analyzeStillImage } from "../../../../lib/vision";
 
 export const runtime = "nodejs";
 
@@ -17,15 +17,9 @@ export async function POST(request: Request) {
     if (image.size > 8 * 1024 * 1024) {
       return NextResponse.json({ error: "Image must be 8 MB or smaller" }, { status: 413 });
     }
-    const requestedMode = form.get("synthetic");
-    const synthetic = shouldUseSyntheticMode(
-      typeof requestedMode === "string" ? requestedMode : null,
-      process.env.ATLAS_SYNTHETIC_MODE === "true",
-    );
     const result = await analyzeStillImage({
       bytes: Buffer.from(await image.arrayBuffer()),
       contentType: image.type,
-      synthetic,
     });
     return NextResponse.json(result);
   } catch (error) {

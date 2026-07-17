@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Pool } from "@neondatabase/serverless";
@@ -6,11 +6,10 @@ import { Pool } from "@neondatabase/serverless";
 async function main() {
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) throw new Error("DATABASE_URL is required");
-  const migration = await readFile(join(process.cwd(), "migrations", "0001_atlas_foundation.sql"), "utf8");
   const pool = new Pool({ connectionString });
   try {
-    await pool.query(migration);
-    console.log("Applied 0001_atlas_foundation.sql");
+    const directory=join(process.cwd(),"migrations");
+    for(const file of (await readdir(directory)).filter(x=>x.endsWith(".sql")).sort()){await pool.query(await readFile(join(directory,file),"utf8"));console.log(`Applied ${file}`);}
   } finally {
     await pool.end();
   }
