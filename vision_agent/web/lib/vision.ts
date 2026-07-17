@@ -4,7 +4,6 @@ import { config } from "dotenv";
 import { resolve } from "node:path";
 import { existsSync } from "node:fs";
 import sharp from "sharp";
-import * as ort from "onnxruntime-node";
 
 const localEnvironment = {
   ...(config({ path: resolve(process.cwd(), "../../.env"), override: false, quiet: true }).parsed ?? {}),
@@ -226,6 +225,9 @@ function boxIoU(first: Detection, second: Detection) {
 }
 
 async function runLocalCannedGoods(bytes: Buffer): Promise<{ predictions: Detection[]; width: number; height: number }> {
+  // Load the native runtime lazily because some serverless environments cannot
+  // load the platform-specific binary during route initialization.
+  const ort = await import("onnxruntime-node");
   const metadata = await sharp(bytes).metadata();
   const width = metadata.width ?? 900;
   const height = metadata.height ?? 600;
@@ -260,7 +262,14 @@ async function runLocalCannedGoods(bytes: Buffer): Promise<{ predictions: Detect
 }
 
 async function runDetector(bytes: Buffer) {
-  if (existsSync(resolve(process.cwd(), "models/canned_goods.onnx"))) return runLocalCannedGoods(bytes);
+  if (existsSync(resolve(process.cwd(), "models/canned_goods.onnx"))) {
+    try {
+      return await runLocalCannedGoods(bytes);
+    } catch {
+      const metadata = await sharp(bytes).metadata();
+      return { width: metadata.width ?? 600, height: metadata.height ?? 600, predictions: [] };
+    }
+  }
   return runRoboflow(bytes);
 }
 
