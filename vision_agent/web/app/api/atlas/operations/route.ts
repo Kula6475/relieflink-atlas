@@ -4,8 +4,10 @@ import { foodBankContext } from "../../../../lib/food-bank";
 import { sql, withTransaction } from "../../../../lib/db";
 import {
   fetchDisruptions,
+  fetchOptimalRoute,
   forecastDemand,
   haversine,
+  networkBalanceTarget,
   severityMultiplier,
   type Site,
 } from "../../../../lib/atlas/operational";
@@ -86,12 +88,21 @@ export async function POST() {
               category
             ] || 0,
           ),
-          target = Math.max(model.forecast, safetyStock);
+          peerInventory = network
+            .filter(
+              (row) =>
+                String(row.category).trim().toLowerCase() ===
+                category.trim().toLowerCase(),
+            )
+            .map((row) => Number(row.quantity)),
+          balanceTarget = networkBalanceTarget(onHand, peerInventory),
+          target = Math.max(model.forecast, safetyStock, balanceTarget);
         return {
           category,
           onHand,
           safetyStock,
           target,
+          networkBalanceTarget: balanceTarget,
           ...model,
           shortage: Math.max(0, target - onHand),
         };
@@ -108,7 +119,11 @@ export async function POST() {
       shortage: 0,
     };
     const candidates = network
-      .filter((x) => x.category === need.category)
+      .filter(
+        (x) =>
+          String(x.category).trim().toLowerCase() ===
+          need.category.trim().toLowerCase(),
+      )
       .map((x) => {
         const source = {
           id: String(x.id),
@@ -141,47 +156,50 @@ export async function POST() {
       })
       .filter((x) => x.available > 0)
       .sort((a, b) => a.distance - b.distance);
-    const source = candidates[0] || null,
-      requested = need.shortage,
-      counter = source ? boundedOffer(requested, source.available) : 0,
-      accepted = counter > 0,
-      transport =
-        source && counter
-          ? {
-              fromSiteId: source.id,
-              fromSite: source.name,
-              toSite: site.name,
-              category: need.category,
-              quantity: counter,
-              distanceMiles: Number(source.distance.toFixed(1)),
-              estimatedMinutes: Math.max(
-                10,
-                Math.ceil((source.distance / 35) * 60),
-              ),
-              capacityStatus: "requires logistics confirmation",
-            }
-          : null,
-      requestingAgent = String(
-        siteRows[0].agent_name || `${site.name} Inventory Agent`,
-      ),
-      negotiation = source
-        ? await explainNegotiation({
-            requestingSite: site.name,
-            requestingAgent,
-            donorSite: source.name,
-            donorAgent: source.agentName,
+    const source = candidates[0] || null;
+    const requested = need.shortage;
+    const counter = source ? boundedOffer(requested, source.available) : 0;
+    const accepted = counter > 0;
+    const route =
+      source && counter ? await fetchOptimalRoute(source, site) : null;
+    const transport =
+      source && counter && route
+        ? {
+            fromSiteId: source.id,
+            fromSite: source.name,
+            from: { latitude: source.latitude, longitude: source.longitude },
+            to: { latitude: site.latitude, longitude: site.longitude },
+            toSite: site.name,
             category: need.category,
-            requested,
-            offered: counter,
-            verifiedSurplus: source.available,
-            safetyStock: source.safetyStock,
-            distanceMiles: Number(source.distance.toFixed(1)),
-          })
-        : {
-            mode: "rules" as const,
-            explanation:
-              "No partner branch has verified surplus above safety stock for this category.",
-          };
+            quantity: counter,
+            distanceMiles: route.distanceMiles,
+            estimatedMinutes: route.estimatedMinutes,
+            routeSource: route.source,
+            routeCoordinates: route.coordinates,
+            capacityStatus: "requires logistics confirmation",
+          }
+        : null;
+    const requestingAgent = String(
+      siteRows[0].agent_name || `${site.name} Inventory Agent`,
+    );
+    const negotiation = source
+      ? await explainNegotiation({
+          requestingSite: site.name,
+          requestingAgent,
+          donorSite: source.name,
+          donorAgent: source.agentName,
+          category: need.category,
+          requested,
+          offered: counter,
+          verifiedSurplus: source.available,
+          safetyStock: source.safetyStock,
+          distanceMiles: Number(source.distance.toFixed(1)),
+        })
+      : {
+          mode: "rules" as const,
+          explanation:
+            "No partner branch has verified surplus above safety stock for this category.",
+        };
     const output = await withTransaction(async (c) => {
       const run = (
         await c.query(
@@ -225,6 +243,20 @@ export async function POST() {
             requested,
             counteroffer: counter,
             acceptedByPolicy: accepted,
+            messages: source
+              ? [
+                  {
+                    from: requestingAgent,
+                    to: source.agentName,
+                    text: `Requesting ${requested} ${need.category} based on a verified shortage target of ${need.target}.`,
+                  },
+                  {
+                    from: source.agentName,
+                    to: requestingAgent,
+                    text: `I can offer ${counter} ${need.category}. My ledger shows ${source.available} available above safety stock and existing commitments.`,
+                  },
+                ]
+              : [],
           },
           explanation: source
             ? negotiation.explanation
@@ -239,7 +271,7 @@ export async function POST() {
             reason: "No negotiated load",
           },
           explanation: transport
-            ? `Estimated ${transport.distanceMiles} miles and ${transport.estimatedMinutes} minutes; a logistics human must confirm vehicle capacity.`
+            ? `${transport.routeSource} selected: ${transport.distanceMiles} miles and ${transport.estimatedMinutes} minutes. A logistics human must confirm vehicle capacity.`
             : "No route was proposed.",
           approval: Boolean(transport),
         },

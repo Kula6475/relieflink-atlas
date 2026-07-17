@@ -1,7 +1,11 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useState } from "react";
 import { apiJson } from "./client-api";
+const ReallocationMap = dynamic(() => import("./reallocation-map"), {
+  ssr: false,
+});
 
 type Step = {
   agent: string;
@@ -39,7 +43,15 @@ type RunsResponse = {
   };
 };
 
-export function AtlasOperations() {
+export function AtlasOperations({
+  label = "Open live coordination",
+  launchOnOpen = false,
+  onOpen,
+}: {
+  label?: string;
+  launchOnOpen?: boolean;
+  onOpen?: () => void | Promise<void>;
+}) {
   const [open, setOpen] = useState(false),
     [busy, setBusy] = useState(false),
     [runs, setRuns] = useState<Run[]>([]),
@@ -62,7 +74,7 @@ export function AtlasOperations() {
       const body = await apiJson<{ run: Run }>("/api/atlas/operations", {
         method: "POST",
       });
-      setRuns((current) => [body.run, ...current]);
+      if (body.run) await load();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Run failed");
     } finally {
@@ -88,20 +100,26 @@ export function AtlasOperations() {
       setBusy(false);
     }
   }
-  function show() {
+  async function show() {
     setOpen(true);
     setError("");
-    void load().catch((cause) =>
+    try {
+      await Promise.all([load(), onOpen?.()]);
+      if (launchOnOpen) await launch();
+    } catch (cause) {
       setError(
         cause instanceof Error ? cause.message : "Command center unavailable",
-      ),
-    );
+      );
+    }
   }
   return (
     <>
-      <button className="button secondary atlas-launch" onClick={show}>
+      <button
+        className="button secondary atlas-launch"
+        onClick={() => void show()}
+      >
         <span>ATLAS / LIVE OPS</span>
-        <strong>Open live coordination</strong>
+        <strong>{label}</strong>
         <b>→</b>
       </button>
       {open && (
@@ -168,90 +186,159 @@ export function AtlasOperations() {
             </div>
             {error && <p className="error">{error}</p>}
             <div className="run-list">
-              {runs.map((run) => (
-                <article key={run.id}>
-                  <div className="run-head">
-                    <div>
-                      <strong>
-                        {new Date(
-                          run.created_at || Date.now(),
-                        ).toLocaleString()}
-                      </strong>
-                      <span className={`run-status ${run.status}`}>
-                        {run.status.replaceAll("_", " ")}
-                      </span>
-                    </div>
-                    {run.status === "awaiting_human" && (
+              {runs.map((run) => {
+                const disruption = run.steps.find((step) =>
+                  (step.agent_name || step.agent)
+                    .toLowerCase()
+                    .includes("disruption"),
+                );
+                const events = Array.isArray(disruption?.output?.events)
+                  ? disruption.output.events
+                  : [];
+                const logistics = run.steps.find((step) =>
+                  (step.agent_name || step.agent)
+                    .toLowerCase()
+                    .includes("transport"),
+                );
+                const routeCoordinates = Array.isArray(
+                  logistics?.output?.routeCoordinates,
+                )
+                  ? logistics.output.routeCoordinates
+                  : [];
+                return (
+                  <article key={run.id}>
+                    <div className="run-head">
                       <div>
-                        <button onClick={() => void decide(run.id, "rejected")}>
-                          Reject
-                        </button>
-                        <button
-                          className="approve"
-                          onClick={() => void decide(run.id, "approved")}
-                        >
-                          Approve plan
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                  {run.consignment && (
-                    <div className="consignment-summary">
-                      <div>
-                        <small>Category</small>
-                        <strong>{run.consignment.category}</strong>
-                      </div>
-                      <div>
-                        <small>Requested</small>
                         <strong>
-                          {Number(
-                            run.consignment.requested_quantity,
+                          {new Date(
+                            run.created_at || Date.now(),
                           ).toLocaleString()}
                         </strong>
+                        <span className={`run-status ${run.status}`}>
+                          {run.status.replaceAll("_", " ")}
+                        </span>
                       </div>
-                      <div>
-                        <small>Partner offer</small>
-                        <strong>
-                          {Number(
-                            run.consignment.offered_quantity,
-                          ).toLocaleString()}
-                        </strong>
-                      </div>
-                      <div>
-                        <small>Negotiation</small>
-                        <strong>
-                          {run.consignment.negotiation_mode === "openai"
-                            ? "AI explained"
-                            : "Rules verified"}
-                        </strong>
-                      </div>
-                    </div>
-                  )}
-                  <div className="agent-flow">
-                    {run.steps.map((step, index) => (
-                      <div
-                        className="flow-step"
-                        key={`${step.agent_name || step.agent}-${index}`}
-                      >
-                        <span>{index + 1}</span>
+                      {run.status === "awaiting_human" && (
                         <div>
-                          <small>{step.agent_name || step.agent}</small>
-                          <strong>{step.explanation}</strong>
-                          {step.output?.counteroffer !== undefined && (
-                            <p>
-                              Requested {step.output.requested} → counteroffer{" "}
-                              {step.output.counteroffer}
-                            </p>
-                          )}
-                          {step.requires_human_approval || step.approval ? (
-                            <em>Human approval boundary</em>
-                          ) : null}
+                          <button
+                            onClick={() => void decide(run.id, "rejected")}
+                          >
+                            Reject
+                          </button>
+                          <button
+                            className="approve"
+                            onClick={() => void decide(run.id, "approved")}
+                          >
+                            Approve plan
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                    {run.consignment && (
+                      <div className="consignment-summary">
+                        <div>
+                          <small>Category</small>
+                          <strong>{run.consignment.category}</strong>
+                        </div>
+                        <div>
+                          <small>Requested</small>
+                          <strong>
+                            {Number(
+                              run.consignment.requested_quantity,
+                            ).toLocaleString()}
+                          </strong>
+                        </div>
+                        <div>
+                          <small>Partner offer</small>
+                          <strong>
+                            {Number(
+                              run.consignment.offered_quantity,
+                            ).toLocaleString()}
+                          </strong>
+                        </div>
+                        <div>
+                          <small>Negotiation</small>
+                          <strong>
+                            {run.consignment.negotiation_mode === "openai"
+                              ? "AI explained"
+                              : "Rules verified"}
+                          </strong>
                         </div>
                       </div>
-                    ))}
-                  </div>
-                </article>
-              ))}
+                    )}
+                    {events.length > 0 && (
+                      <div className="disruption-list">
+                        <strong>Active disruption evidence</strong>
+                        {events.slice(0, 3).map((event: any) => (
+                          <div key={`${event.source}-${event.id}`}>
+                            <span>{event.source}</span>
+                            <p>{event.headline}</p>
+                            <small>{event.severity}</small>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {routeCoordinates.length > 1 && (
+                      <div className="route-review">
+                        <div>
+                          <strong>Recommended transfer route</strong>
+                          <span>
+                            {logistics?.output?.distanceMiles} miles ·{" "}
+                            {logistics?.output?.estimatedMinutes} minutes ·{" "}
+                            {logistics?.output?.routeSource}
+                          </span>
+                        </div>
+                        <ReallocationMap
+                          coordinates={routeCoordinates}
+                          from={String(
+                            logistics?.output?.fromSite || "Source branch",
+                          )}
+                          to={String(
+                            logistics?.output?.toSite || "Destination branch",
+                          )}
+                        />
+                      </div>
+                    )}
+                    <div className="agent-flow">
+                      {run.steps.map((step, index) => (
+                        <div
+                          className="flow-step"
+                          key={`${step.agent_name || step.agent}-${index}`}
+                        >
+                          <span>{index + 1}</span>
+                          <div>
+                            <small>{step.agent_name || step.agent}</small>
+                            <strong>{step.explanation}</strong>
+                            {step.output?.counteroffer !== undefined && (
+                              <p>
+                                Requested {step.output.requested} → counteroffer{" "}
+                                {step.output.counteroffer}
+                              </p>
+                            )}
+                            {Array.isArray(step.output?.messages) &&
+                              step.output.messages.map(
+                                (message: any, messageIndex: number) => (
+                                  <div
+                                    className="agent-message"
+                                    key={messageIndex}
+                                  >
+                                    <small>
+                                      {message.from} → {message.to}
+                                    </small>
+                                    <p>{message.text}</p>
+                                  </div>
+                                ),
+                              )}
+                            {step.requires_human_approval || step.approval ? (
+                              <em>Human approval boundary</em>
+                            ) : null}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </article>
+                );
+              })}
               {!runs.length && !busy && (
                 <div className="empty-state">
                   <h3>No orchestration runs yet</h3>

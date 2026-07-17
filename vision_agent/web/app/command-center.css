@@ -783,3 +783,108 @@ body {
     text-align: left;
   }
 }
+
+.agent-hero .atlas-launch {
+  width: auto !important;
+  min-width: 310px !important;
+  margin: 0 !important;
+  background: #fff !important;
+}
+.disruption-list {
+  margin-top: 14px;
+  border: 1px solid var(--line);
+  background: #fff;
+}
+.disruption-list > strong {
+  display: block;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: 11px;
+}
+.disruption-list > div {
+  display: grid;
+  grid-template-columns: 100px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-bottom: 1px solid #e5ebe7;
+}
+.disruption-list > div:last-child {
+  border-bottom: 0;
+}
+.disruption-list span {
+  color: var(--teal);
+  font: 750 9px ui-monospace;
+  text-transform: uppercase;
+}
+.disruption-list p {
+  margin: 0;
+  font-size: 11px;
+}
+.disruption-list small {
+  color: var(--muted);
+  font-size: 10px;
+}
+.route-review {
+  margin-top: 14px;
+  border: 1px solid var(--line);
+  background: #fff;
+}
+.route-review > div:first-child {
+  display: flex;
+  justify-content: space-between;
+  gap: 15px;
+  padding: 11px 12px;
+}
+.route-review span {
+  color: var(--muted);
+  font-size: 10px;
+}
+.reallocation-map {
+  height: 300px;
+  border-top: 1px solid var(--line);
+}
+.route-marker {
+  background: transparent !important;
+  border: 0 !important;
+}
+.route-marker span {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 2px solid #fff;
+  border-radius: 50% !important;
+  background: #173f38;
+  color: #fff;
+  font-weight: 900;
+}
+.route-marker.destination span {
+  background: #e06e35;
+}
+.agent-message {
+  margin-top: 8px;
+  padding: 8px;
+  border-left: 2px solid var(--teal);
+  background: #fff;
+}
+.agent-message small {
+  font-size: 8px !important;
+}
+.agent-message p {
+  margin: 4px 0 0 !important;
+  color: #263a32 !important;
+  font-size: 9px !important;
+}
+@media (max-width: 760px) {
+  .agent-hero .atlas-launch {
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+  .disruption-list > div {
+    grid-template-columns: 1fr;
+  }
+  .route-review > div:first-child {
+    flex-direction: column;
+  }
+}

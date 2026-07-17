@@ -467,13 +467,11 @@ export function AtlasDashboard({ initialUser }: { initialUser: User | null }) {
                   </p>
                 </div>
               </div>
-              <button
-                className="button light"
-                disabled={busy}
-                onClick={() => void runAgent()}
-              >
-                {busy ? "Reviewing…" : "Run inventory review"}
-              </button>
+              <AtlasOperations
+                label="Run inventory + network review"
+                launchOnOpen
+                onOpen={runAgent}
+              />
             </div>
             {agent && (
               <>
@@ -507,16 +505,11 @@ export function AtlasDashboard({ initialUser }: { initialUser: User | null }) {
                             <small>Proposed next step</small>
                             <strong>{r.proposedAction}</strong>
                           </div>
-                          <button
-                            className="button secondary"
-                            onClick={() =>
-                              setNotice(
-                                "Acknowledged for human review. No commitment was executed.",
-                              )
-                            }
-                          >
-                            Acknowledge for review
-                          </button>
+                          <p className="helper">
+                            Included in the live network review above. Any
+                            transfer proposal will show the partner agent&apos;s
+                            counteroffer, route, and approval boundary.
+                          </p>
                         </div>
                       </article>
                     ))
