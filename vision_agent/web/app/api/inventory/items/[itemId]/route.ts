@@ -48,7 +48,7 @@ export async function PATCH(
     const item = await withTransaction(async (client) => {
       const before = (
         await client.query(
-          "SELECT * FROM inventory_items WHERE id=$1 AND site_id=$2 FOR UPDATE",
+          "SELECT * FROM inventory_items WHERE id=$1 AND site_id=$2 AND archived_at IS NULL FOR UPDATE",
           [itemId, context.siteId],
         )
       ).rows[0];
@@ -104,6 +104,66 @@ export async function PATCH(
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Unable to edit item" },
+      { status: 400 },
+    );
+  }
+}
+
+export async function DELETE(
+  _request: Request,
+  ctx: { params: Promise<{ itemId: string }> },
+) {
+  const session = await getSession();
+  if (!session)
+    return NextResponse.json(
+      { error: "Authentication required" },
+      { status: 401 },
+    );
+  try {
+    const context = await foodBankContext(session);
+    if (!canEditInventory(context.role))
+      throw new Error("Inventory edit permission required");
+    const { itemId } = await ctx.params;
+    await withTransaction(async (client) => {
+      const before = (
+        await client.query(
+          "SELECT * FROM inventory_items WHERE id=$1 AND site_id=$2 AND archived_at IS NULL FOR UPDATE",
+          [itemId, context.siteId],
+        )
+      ).rows[0];
+      if (!before) throw new Error("Inventory item not found");
+      const quantity = Number(before.quantity);
+      if (quantity > 0)
+        await client.query(
+          "INSERT INTO inventory_transactions(organization_id,site_id,inventory_item_id,category,product_name,quantity,unit,direction,transaction_type,source,operator_id,approval_status,reviewer_id,approved_at,idempotency_key,metadata) VALUES($1,$2,$3,$4,$5,$6,$7,'out','manual_adjustment','spreadsheet',$8,'approved',$8,now(),$9,$10)",
+          [
+            context.organizationId,
+            context.siteId,
+            itemId,
+            before.category,
+            before.product_name,
+            quantity,
+            before.unit,
+            session.userId,
+            `item-remove:${itemId}:${before.row_version}:${randomUUID()}`,
+            { reason: "Inventory row removed", before: quantity, after: 0 },
+          ],
+        );
+      const after = (
+        await client.query(
+          "UPDATE inventory_items SET quantity=0,archived_at=now(),row_version=row_version+1,updated_by=$1,updated_at=now() WHERE id=$2 RETURNING *",
+          [session.userId, itemId],
+        )
+      ).rows[0];
+      await client.query(
+        "INSERT INTO inventory_item_changes(inventory_item_id,organization_id,changed_by,before_value,after_value,change_reason) VALUES($1,$2,$3,$4,$5,'Inventory row removed')",
+        [itemId, context.organizationId, session.userId, before, after],
+      );
+    });
+    return NextResponse.json({ removed: true });
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Unable to remove item" },
       { status: 400 },
     );
   }

@@ -15,7 +15,7 @@ export async function GET() {
       foodBankContext(session),
       sql()`WITH inventory AS (
         SELECT site_id,category,sum(quantity)::float quantity
-        FROM inventory_items WHERE condition='good' GROUP BY site_id,category
+        FROM inventory_items WHERE condition='good' AND archived_at IS NULL GROUP BY site_id,category
       ), commitments AS (
         SELECT site_id,category,sum(quantity)::float committed FROM (
           SELECT site_id,category,quantity FROM inventory_reservations WHERE status IN('provisional','active')

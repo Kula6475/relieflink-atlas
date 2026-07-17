@@ -64,7 +64,7 @@ export default function FoodBankMap({ foodBanks }: { foodBanks: Bank[] }) {
     <MapContainer center={[37.77, -122.25]} zoom={9} className="network-map">
       <TileLayer
         attribution="&copy; OpenStreetMap contributors"
-        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        url="/api/map/tiles/{z}/{x}/{y}.png"
       />
       <Fit banks={visibleBanks} />
       {visibleBanks.map((bank) => (

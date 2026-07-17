@@ -46,7 +46,7 @@ export async function POST(
         ]);
         const inventoryRows = (
             await client.query(
-              "SELECT quantity FROM inventory_items WHERE site_id=$1 AND lower(category)=lower($2) AND condition='good' FOR UPDATE",
+              "SELECT quantity FROM inventory_items WHERE site_id=$1 AND lower(category)=lower($2) AND condition='good' AND archived_at IS NULL FOR UPDATE",
               [found.source_site_id, found.category],
             )
           ).rows,

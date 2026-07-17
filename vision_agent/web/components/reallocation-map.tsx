@@ -65,7 +65,7 @@ export default function ReallocationMap({
     >
       <TileLayer
         attribution="&copy; OpenStreetMap contributors"
-        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        url="/api/map/tiles/{z}/{x}/{y}.png"
       />
       <Fit coordinates={validCoordinates} />
       <Polyline
