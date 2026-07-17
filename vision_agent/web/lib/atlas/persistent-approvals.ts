@@ -1,6 +1,10 @@
 import type { PoolClient } from "@neondatabase/serverless";
 
-import { approvalOutcome, mayDecideApproval, type ApprovalRequirement } from "../approvals";
+import {
+  approvalOutcome,
+  mayDecideApproval,
+  type ApprovalRequirement,
+} from "../approvals";
 import type { Session } from "../auth";
 import { withTransaction } from "../db";
 import { assertReservationIsSafe } from "../inventory";
@@ -13,7 +17,11 @@ type ApprovalRow = {
   status: ApprovalRequirement["status"];
 };
 
-async function actorRoles(client: PoolClient, userId: string, organizationId: string) {
+async function actorRoles(
+  client: PoolClient,
+  userId: string,
+  organizationId: string,
+) {
   const result = await client.query(
     `SELECT role FROM organization_memberships
      WHERE user_id = $1 AND organization_id = $2`,
@@ -35,34 +43,49 @@ export async function decidePersistentApproval(input: {
     );
     const requirement = locked.rows[0] as ApprovalRow | undefined;
     if (!requirement) throw new Error("Approval requirement not found");
-    if (requirement.status !== "pending") throw new Error("Approval has already been decided");
-    const roles = await actorRoles(client, input.session.userId, requirement.organization_id);
-    if (!mayDecideApproval({
-      requirement: {
-        organizationId: requirement.organization_id,
-        approvalRole: requirement.approval_role,
-        status: requirement.status,
-      },
-      actorOrganizationId: requirement.organization_id,
-      actorRoles: roles,
-      globalRole: input.session.globalRole,
-    })) throw new Error("You cannot decide this organization's commitment");
+    if (requirement.status !== "pending")
+      throw new Error("Approval has already been decided");
+    const roles = await actorRoles(
+      client,
+      input.session.userId,
+      requirement.organization_id,
+    );
+    if (
+      !mayDecideApproval({
+        requirement: {
+          organizationId: requirement.organization_id,
+          approvalRole: requirement.approval_role,
+          status: requirement.status,
+        },
+        actorOrganizationId: requirement.organization_id,
+        actorRoles: roles,
+        globalRole: input.session.globalRole,
+      })
+    )
+      throw new Error("You cannot decide this organization's commitment");
 
     await client.query(
       `UPDATE required_approvals SET status = $1, decision_by = $2,
        decision_note = $3, decided_at = now() WHERE id = $4`,
-      [input.decision, input.session.userId, input.note ?? null, input.approvalId],
+      [
+        input.decision,
+        input.session.userId,
+        input.note ?? null,
+        input.approvalId,
+      ],
     );
     const all = await client.query(
       `SELECT organization_id, approval_role, status FROM required_approvals
        WHERE transfer_proposal_id = $1`,
       [requirement.transfer_proposal_id],
     );
-    const outcome = approvalOutcome(all.rows.map((row) => ({
-      organizationId: String(row.organization_id),
-      approvalRole: row.approval_role,
-      status: row.status,
-    })));
+    const outcome = approvalOutcome(
+      all.rows.map((row) => ({
+        organizationId: String(row.organization_id),
+        approvalRole: row.approval_role,
+        status: row.status,
+      })),
+    );
     await client.query(
       "UPDATE transfer_proposals SET status = $1, updated_at = now() WHERE id = $2",
       [outcome, requirement.transfer_proposal_id],
@@ -92,7 +115,8 @@ export async function decidePersistentApproval(input: {
             "SELECT safety_stock_policy FROM sites WHERE id = $1 FOR UPDATE",
             [allocation.sourceId],
           );
-          if (!site.rows[0]) throw new Error("Allocation source site no longer exists");
+          if (!site.rows[0])
+            throw new Error("Allocation source site no longer exists");
           const position = await client.query(
             `SELECT
               COALESCE((SELECT SUM(CASE WHEN direction = 'in' THEN quantity WHEN direction = 'out' THEN -quantity ELSE 0 END)
@@ -101,7 +125,10 @@ export async function decidePersistentApproval(input: {
                 AND category = $2 AND status IN ('provisional','active')), 0) AS reserved`,
             [allocation.sourceId, proposal.category],
           );
-          const policy = site.rows[0].safety_stock_policy as Record<string, number>;
+          const policy = site.rows[0].safety_stock_policy as Record<
+            string,
+            number
+          >;
           assertReservationIsSafe({
             onHand: Number(position.rows[0].on_hand),
             alreadyReserved: Number(position.rows[0].reserved),
@@ -113,7 +140,31 @@ export async function decidePersistentApproval(input: {
              (organization_id, site_id, category, quantity, status, transfer_proposal_id, expires_at)
              VALUES ($1, $2, $3, $4, 'active', $5, $6)
              ON CONFLICT (transfer_proposal_id, site_id, category) WHERE site_id IS NOT NULL DO NOTHING`,
-            [allocation.organizationId, allocation.sourceId, proposal.category, allocation.quantity, proposal.id, proposal.expires_at],
+            [
+              allocation.organizationId,
+              allocation.sourceId,
+              proposal.category,
+              allocation.quantity,
+              proposal.id,
+              proposal.expires_at,
+            ],
+          );
+          await client.query(
+            `INSERT INTO inventory_transactions
+             (organization_id,site_id,category,product_name,quantity,unit,direction,transaction_type,source,
+              operator_id,approval_status,reviewer_id,approved_at,transfer_proposal_id,idempotency_key,metadata)
+             VALUES($1,$2,$3,$3,$4,'cases','hold','reservation','atlas',$5,'approved',$5,now(),$6,$7,$8)
+             ON CONFLICT(idempotency_key) DO NOTHING`,
+            [
+              allocation.organizationId,
+              allocation.sourceId,
+              proposal.category,
+              allocation.quantity,
+              input.session.userId,
+              proposal.id,
+              `reservation:${proposal.id}:${allocation.sourceId}`,
+              { proposalVersion: proposal.version },
+            ],
           );
         } else {
           const supply = await client.query(
@@ -123,7 +174,12 @@ export async function decidePersistentApproval(input: {
              FROM vendor_supply v WHERE v.id = $1 FOR UPDATE`,
             [allocation.sourceId],
           );
-          if (!supply.rows[0] || Number(supply.rows[0].available_quantity) - Number(supply.rows[0].reserved) < allocation.quantity) {
+          if (
+            !supply.rows[0] ||
+            Number(supply.rows[0].available_quantity) -
+              Number(supply.rows[0].reserved) <
+              allocation.quantity
+          ) {
             throw new Error("Vendor supply is no longer available");
           }
           await client.query(
@@ -131,7 +187,14 @@ export async function decidePersistentApproval(input: {
              (organization_id, vendor_supply_id, category, quantity, status, transfer_proposal_id, expires_at)
              VALUES ($1, $2, $3, $4, 'active', $5, $6)
              ON CONFLICT (transfer_proposal_id, vendor_supply_id, category) WHERE vendor_supply_id IS NOT NULL DO NOTHING`,
-            [allocation.organizationId, allocation.sourceId, proposal.category, allocation.quantity, proposal.id, proposal.expires_at],
+            [
+              allocation.organizationId,
+              allocation.sourceId,
+              proposal.category,
+              allocation.quantity,
+              proposal.id,
+              proposal.expires_at,
+            ],
           );
         }
       }
@@ -146,7 +209,12 @@ export async function decidePersistentApproval(input: {
           pickup_window_end, delivery_window_start, delivery_window_end, manifest)
          VALUES ($1, 'reserved', $2, now(), now() + interval '4 hours', now() + interval '4 hours',
           $3, $4) ON CONFLICT (transfer_proposal_id) DO NOTHING`,
-        [proposal.id, logistics.rows[0].organization_id, proposal.needed_by, JSON.stringify(plan)],
+        [
+          proposal.id,
+          logistics.rows[0].organization_id,
+          proposal.needed_by,
+          JSON.stringify(plan),
+        ],
       );
       await client.query(
         "UPDATE transfer_proposals SET status = 'reserved', updated_at = now() WHERE id = $1",
@@ -156,7 +224,10 @@ export async function decidePersistentApproval(input: {
         "UPDATE negotiations SET status = 'reserved', updated_at = now() WHERE id = $1",
         [proposal.negotiation_id],
       );
-      return { proposalId: requirement.transfer_proposal_id, status: "reserved" as const };
+      return {
+        proposalId: requirement.transfer_proposal_id,
+        status: "reserved" as const,
+      };
     }
     return { proposalId: requirement.transfer_proposal_id, status: outcome };
   });
