@@ -13,17 +13,47 @@ type Step = {
   requires_human_approval?: boolean;
   approval?: boolean;
 };
-type Run = { id: string; status: string; created_at?: string; steps: Step[] };
-type RunsResponse = { runs: Run[] };
+type Consignment = {
+  source_site_id: string;
+  destination_site_id: string;
+  category: string;
+  requested_quantity: string;
+  offered_quantity: string;
+  status: string;
+  negotiation_mode: string;
+};
+type Run = {
+  id: string;
+  status: string;
+  created_at?: string;
+  steps: Step[];
+  consignment?: Consignment | null;
+};
+type RunsResponse = {
+  runs: Run[];
+  services: {
+    openai: boolean;
+    weather: boolean;
+    fema: boolean;
+    database: boolean;
+  };
+};
 
 export function AtlasOperations() {
   const [open, setOpen] = useState(false),
     [busy, setBusy] = useState(false),
     [runs, setRuns] = useState<Run[]>([]),
+    [services, setServices] = useState<RunsResponse["services"]>({
+      openai: false,
+      weather: true,
+      fema: true,
+      database: true,
+    }),
     [error, setError] = useState("");
   async function load() {
     const body = await apiJson<RunsResponse>("/api/atlas/operations");
     setRuns(body.runs);
+    setServices(body.services);
   }
   async function launch() {
     setBusy(true);
@@ -71,7 +101,7 @@ export function AtlasOperations() {
     <>
       <button className="button secondary atlas-launch" onClick={show}>
         <span>ATLAS / LIVE OPS</span>
-        <strong>Open command center</strong>
+        <strong>Open live coordination</strong>
         <b>→</b>
       </button>
       {open && (
@@ -82,8 +112,8 @@ export function AtlasOperations() {
                 <p className="eyebrow">Live multi-agent orchestration</p>
                 <h2>ATLAS command center</h2>
                 <p>
-                  Five agents share evidence, negotiate a feasible response,
-                  then stop for human authority.
+                  Site agents share verified inventory, negotiate bounded
+                  branch-to-branch consignments, and stop for your approval.
                 </p>
               </div>
               <button
@@ -124,6 +154,18 @@ export function AtlasOperations() {
                 inventory + route math
               </span>
             </div>
+            <div className="atlas-service-strip">
+              <span className={services.database ? "live" : ""}>
+                Database {services.database ? "live" : "missing"}
+              </span>
+              <span className={services.weather ? "live" : ""}>
+                Weather.gov live
+              </span>
+              <span className={services.fema ? "live" : ""}>OpenFEMA live</span>
+              <span className={services.openai ? "live" : ""}>
+                OpenAI {services.openai ? "connected" : "rules fallback"}
+              </span>
+            </div>
             {error && <p className="error">{error}</p>}
             <div className="run-list">
               {runs.map((run) => (
@@ -153,6 +195,38 @@ export function AtlasOperations() {
                       </div>
                     )}
                   </div>
+                  {run.consignment && (
+                    <div className="consignment-summary">
+                      <div>
+                        <small>Category</small>
+                        <strong>{run.consignment.category}</strong>
+                      </div>
+                      <div>
+                        <small>Requested</small>
+                        <strong>
+                          {Number(
+                            run.consignment.requested_quantity,
+                          ).toLocaleString()}
+                        </strong>
+                      </div>
+                      <div>
+                        <small>Partner offer</small>
+                        <strong>
+                          {Number(
+                            run.consignment.offered_quantity,
+                          ).toLocaleString()}
+                        </strong>
+                      </div>
+                      <div>
+                        <small>Negotiation</small>
+                        <strong>
+                          {run.consignment.negotiation_mode === "openai"
+                            ? "AI explained"
+                            : "Rules verified"}
+                        </strong>
+                      </div>
+                    </div>
+                  )}
                   <div className="agent-flow">
                     {run.steps.map((step, index) => (
                       <div
