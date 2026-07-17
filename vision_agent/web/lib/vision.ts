@@ -224,6 +224,9 @@ export async function analyzeStillImage(input: {
   const claude = await countWithClaude(imageDataUrl);
   const llm = await classifyWithVision(imageDataUrl);
   const totalClaudeCount = Object.values(claude.count.counts).reduce((sum, count) => sum + count, 0);
+  const detectorCount = detections.length;
+  const usedDetectorFallback = totalClaudeCount === 0 && detectorCount > 0;
+  const visibleCount = usedDetectorFallback ? detectorCount : totalClaudeCount;
   const classification = llm ? {
     product: llm.product ?? "Unconfirmed food package",
     category: llm.category ?? "uncategorized",
@@ -249,12 +252,14 @@ export async function analyzeStillImage(input: {
     imageHeight,
     yoloModel: String(setting("YOLO_MODEL_ID")),
     detections,
-    visibleObjectCount: totalClaudeCount,
-    averageConfidence: claude.confidence,
+    visibleObjectCount: visibleCount,
+    averageConfidence: usedDetectorFallback ? Math.min(0.59, detections.reduce((sum, item) => sum + item.confidence, 0) / detectorCount) : claude.confidence,
     classification,
     disagreement,
     countMethod: "claude_two_pass",
-    countNote: `Claude two-pass count: ${claude.count.notes || "two independent region-by-region counts"}. Bounding boxes are Roboflow overlays and may not equal the Claude count.`,
+    countNote: usedDetectorFallback
+      ? `Claude returned an all-zero tally, so the UI shows ${detectorCount} visible detector packages as a conservative fallback. Confirm or correct the quantity before approval. ${claude.count.notes}`
+      : `Claude two-pass count: ${claude.count.notes || "two independent region-by-region counts"}. Bounding boxes are Roboflow overlays and may not equal the Claude count.`,
     mode:"cloud",
   };
 }
