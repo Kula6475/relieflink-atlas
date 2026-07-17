@@ -1,3 +1,321 @@
 "use client";
-import {useEffect,useRef,useState} from "react";import type {VisionResult} from "../lib/vision";
-export function VisionIntake({onAdded}:{onAdded:()=>void}){const [file,setFile]=useState<File|null>(null),[result,setResult]=useState<VisionResult|null>(null),[busy,setBusy]=useState(false),[cameraOpen,setCameraOpen]=useState(false),[error,setError]=useState(""),[saved,setSaved]=useState(false);const [draft,setDraft]=useState({productName:"",brand:"",category:"",quantity:0,unit:"items",lotNumber:"",expirationDate:"",warehouseZone:"",binLocation:"",notes:""});const videoRef=useRef<HTMLVideoElement>(null),streamRef=useRef<MediaStream|null>(null);function stop(){streamRef.current?.getTracks().forEach(t=>t.stop());streamRef.current=null;setCameraOpen(false)}useEffect(()=>()=>stop(),[]);useEffect(()=>{if(cameraOpen&&videoRef.current&&streamRef.current){videoRef.current.srcObject=streamRef.current;void videoRef.current.play()}},[cameraOpen]);async function camera(){try{stop();streamRef.current=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:"environment"},width:{ideal:1920},height:{ideal:1080}}});setCameraOpen(true)}catch{setError("Camera access failed. Allow permission or upload a photo instead.")}}function capture(){const v=videoRef.current;if(!v||!v.videoWidth)return;const c=document.createElement("canvas");c.width=v.videoWidth;c.height=v.videoHeight;c.getContext("2d")?.drawImage(v,0,0,c.width,c.height);c.toBlob(blob=>{if(blob){setFile(new File([blob],"food-intake.jpg",{type:"image/jpeg"}));setResult(null);stop()}},"image/jpeg",.9)}async function analyze(){if(!file)return;setBusy(true);setError("");try{const form=new FormData();form.set("image",file);form.set("synthetic","false");const response=await fetch("/api/vision/analyze",{method:"POST",body:form}),body=await response.json();if(!response.ok)throw new Error(body.error||"Analysis failed");setResult(body);setDraft(d=>({...d,productName:body.classification.product,category:body.classification.category,quantity:body.visibleObjectCount,unit:body.classification.packaging||"items",notes:`Vision-assisted intake using ${body.yoloModel}. Operator reviewed ${body.visibleObjectCount} detections.`}));setSaved(false)}catch(e){setError(e instanceof Error?e.message:"Analysis failed")}finally{setBusy(false)}}async function approve(){if(!result)return;setBusy(true);try{const response=await fetch("/api/inventory/items",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...draft,condition:"good",intakeMethod:"vision",visionConfidence:result.averageConfidence})}),body=await response.json();if(!response.ok)throw new Error(body.error||"Could not add inventory");setSaved(true);onAdded()}catch(e){setError(e instanceof Error?e.message:"Could not add inventory")}finally{setBusy(false)}}return <section className="vision-workflow"><div className="vision-grid"><div className="upload-zone"><span className="upload-icon">◉</span><h3>Photo or phone camera</h3><p>YOLO counts visible packages. The multimodal model identifies the food and category. Nothing reaches inventory until you review and approve it.</p><input id="food-image" type="file" accept="image/*" onChange={e=>{setFile(e.target.files?.[0]||null);setResult(null)}}/><label className="button secondary" htmlFor="food-image">{file?file.name:"Choose photo"}</label><button className="button secondary" onClick={()=>void camera()}>Open camera</button>{cameraOpen&&<div><video ref={videoRef} className="camera-preview" muted playsInline/><button className="button primary" onClick={capture}>Capture photo</button></div>}<button className="button primary full" disabled={!file||busy} onClick={()=>void analyze()}>{busy?"Analyzing…":"Analyze food"}</button>{error&&<p className="error">{error}</p>}</div><div className="analysis-result">{result?<><div className="annotated-image"><img src={result.imageDataUrl} alt="Food intake with detection overlay"/>{result.detections.map((d,i)=><span key={i} className="detection-box" style={{left:`${(d.x-d.width/2)/result.imageWidth*100}%`,top:`${(d.y-d.height/2)/result.imageHeight*100}%`,width:`${d.width/result.imageWidth*100}%`,height:`${d.height/result.imageHeight*100}%`}}><b>{i+1}</b></span>)}</div><div className="vision-confidence"><strong>{result.visibleObjectCount} packages detected</strong><span>{Math.round(result.averageConfidence*100)}% average confidence · {result.classification.source.replaceAll("_"," ")}</span></div><div className="review-grid"><label>Food item<input value={draft.productName} onChange={e=>setDraft({...draft,productName:e.target.value})}/></label><label>Brand<input value={draft.brand} onChange={e=>setDraft({...draft,brand:e.target.value})}/></label><label>Category<input value={draft.category} onChange={e=>setDraft({...draft,category:e.target.value})}/></label><label>Quantity<input type="number" min="0" value={draft.quantity} onChange={e=>setDraft({...draft,quantity:Number(e.target.value)})}/></label><label>Unit<input value={draft.unit} onChange={e=>setDraft({...draft,unit:e.target.value})}/></label><label>Expiration<input type="date" value={draft.expirationDate} onChange={e=>setDraft({...draft,expirationDate:e.target.value})}/></label><label>Warehouse zone<input value={draft.warehouseZone} onChange={e=>setDraft({...draft,warehouseZone:e.target.value})}/></label><label>Bin location<input value={draft.binLocation} onChange={e=>setDraft({...draft,binLocation:e.target.value})}/></label></div>{result.classification.uncertainty&&<p className="warning">{result.classification.uncertainty}</p>}<button className="button primary full" disabled={busy||saved} onClick={()=>void approve()}>{saved?"Added to shared ledger":"Approve and add to inventory"}</button><p className="helper">This human approval creates the inventory record. You can correct it later in the spreadsheet.</p></>:<div className="empty-vision"><span>Detection review</span><p>Your image, bounding boxes, detected quantity, and editable item properties will appear here.</p></div>}</div></div></section>}
+import { useEffect, useRef, useState } from "react";
+import type { VisionResult } from "../lib/vision";
+export function VisionIntake({ onAdded, readOnly = false }: { onAdded: () => void; readOnly?: boolean }) {
+  const [file, setFile] = useState<File | null>(null),
+    [result, setResult] = useState<VisionResult | null>(null),
+    [busy, setBusy] = useState(false),
+    [cameraOpen, setCameraOpen] = useState(false),
+    [error, setError] = useState(""),
+    [saved, setSaved] = useState(false);
+  const [draft, setDraft] = useState({
+    productName: "",
+    brand: "",
+    category: "",
+    quantity: 0,
+    unit: "items",
+    lotNumber: "",
+    expirationDate: "",
+    warehouseZone: "",
+    binLocation: "",
+    notes: "",
+  });
+  const videoRef = useRef<HTMLVideoElement>(null),
+    streamRef = useRef<MediaStream | null>(null);
+  function stop() {
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+    setCameraOpen(false);
+  }
+  useEffect(() => () => stop(), []);
+  useEffect(() => {
+    if (cameraOpen && videoRef.current && streamRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+      void videoRef.current.play();
+    }
+  }, [cameraOpen]);
+  async function camera() {
+    try {
+      stop();
+      streamRef.current = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          facingMode: { ideal: "environment" },
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+        },
+      });
+      setCameraOpen(true);
+    } catch {
+      setError(
+        "Camera access failed. Allow permission or upload a photo instead.",
+      );
+    }
+  }
+  function capture() {
+    const v = videoRef.current;
+    if (!v || !v.videoWidth) return;
+    const c = document.createElement("canvas");
+    c.width = v.videoWidth;
+    c.height = v.videoHeight;
+    c.getContext("2d")?.drawImage(v, 0, 0, c.width, c.height);
+    c.toBlob(
+      (blob) => {
+        if (blob) {
+          setFile(new File([blob], "food-intake.jpg", { type: "image/jpeg" }));
+          setResult(null);
+          stop();
+        }
+      },
+      "image/jpeg",
+      0.9,
+    );
+  }
+  async function analyze() {
+    if (!file) return;
+    setBusy(true);
+    setError("");
+    try {
+      const form = new FormData();
+      form.set("image", file);
+      form.set("synthetic", "false");
+      const response = await fetch("/api/vision/analyze", {
+          method: "POST",
+          body: form,
+        }),
+        body = await response.json();
+      if (!response.ok) throw new Error(body.error || "Analysis failed");
+      setResult(body);
+      setDraft((d) => ({
+        ...d,
+        productName: body.classification.product,
+        category: body.classification.category,
+        quantity: body.visibleObjectCount,
+        unit: body.classification.packaging || "items",
+        notes: `Vision-assisted intake using ${body.yoloModel}. Operator reviewed ${body.visibleObjectCount} detections.`,
+      }));
+      setSaved(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Analysis failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function approve() {
+    if (!result) return;
+    if (readOnly) {
+      setError("Synthetic demo is read-only. Sign in to add inventory.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const response = await fetch("/api/inventory/items", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...draft,
+            condition: "good",
+            intakeMethod: "vision",
+            visionConfidence: result.averageConfidence,
+          }),
+        }),
+        body = await response.json();
+      if (!response.ok)
+        throw new Error(body.error || "Could not add inventory");
+      setSaved(true);
+      onAdded();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not add inventory");
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <section className="vision-workflow">
+      <div className="vision-grid">
+        <div className="upload-zone">
+          <span className="upload-icon">◉</span>
+          <h3>Photo or phone camera</h3>
+          <p>
+            YOLO counts visible packages. The multimodal model identifies the
+            food and category. Nothing reaches inventory until you review and
+            approve it.
+          </p>
+          <input
+            id="food-image"
+            type="file"
+            accept="image/*"
+            onChange={(e) => {
+              setFile(e.target.files?.[0] || null);
+              setResult(null);
+            }}
+          />
+          <label className="button secondary" htmlFor="food-image">
+            {file ? file.name : "Choose photo"}
+          </label>
+          <button className="button secondary" onClick={() => void camera()}>
+            Open camera
+          </button>
+          {cameraOpen && (
+            <div>
+              <video
+                ref={videoRef}
+                className="camera-preview"
+                muted
+                playsInline
+              />
+              <button className="button primary" onClick={capture}>
+                Capture photo
+              </button>
+            </div>
+          )}
+          <button
+            className="button primary full"
+            disabled={!file || busy}
+            onClick={() => void analyze()}
+          >
+            {busy ? "Analyzing…" : "Analyze food"}
+          </button>
+          {error && <p className="error">{error}</p>}
+        </div>
+        <div className="analysis-result">
+          {result ? (
+            <>
+              <div className="annotated-image">
+                <img
+                  src={result.imageDataUrl}
+                  alt="Food intake with detection overlay"
+                />
+                {result.detections.map((d, i) => (
+                  <span
+                    key={i}
+                    className="detection-box"
+                    style={{
+                      left: `${((d.x - d.width / 2) / result.imageWidth) * 100}%`,
+                      top: `${((d.y - d.height / 2) / result.imageHeight) * 100}%`,
+                      width: `${(d.width / result.imageWidth) * 100}%`,
+                      height: `${(d.height / result.imageHeight) * 100}%`,
+                    }}
+                  >
+                    <b>{i + 1}</b>
+                  </span>
+                ))}
+              </div>
+              <div className="vision-confidence">
+                <strong>{result.visibleObjectCount} packages detected</strong>
+                <span>
+                  {Math.round(result.averageConfidence * 100)}% average
+                  confidence ·{" "}
+                  {result.classification.source.replaceAll("_", " ")}
+                </span>
+              </div>
+              <div className="review-grid">
+                <label>
+                  Food item
+                  <input
+                    value={draft.productName}
+                    onChange={(e) =>
+                      setDraft({ ...draft, productName: e.target.value })
+                    }
+                  />
+                </label>
+                <label>
+                  Brand
+                  <input
+                    value={draft.brand}
+                    onChange={(e) =>
+                      setDraft({ ...draft, brand: e.target.value })
+                    }
+                  />
+                </label>
+                <label>
+                  Category
+                  <input
+                    value={draft.category}
+                    onChange={(e) =>
+                      setDraft({ ...draft, category: e.target.value })
+                    }
+                  />
+                </label>
+                <label>
+                  Quantity
+                  <input
+                    type="number"
+                    min="0"
+                    value={draft.quantity}
+                    onChange={(e) =>
+                      setDraft({ ...draft, quantity: Number(e.target.value) })
+                    }
+                  />
+                </label>
+                <label>
+                  Unit
+                  <input
+                    value={draft.unit}
+                    onChange={(e) =>
+                      setDraft({ ...draft, unit: e.target.value })
+                    }
+                  />
+                </label>
+                <label>
+                  Expiration
+                  <input
+                    type="date"
+                    value={draft.expirationDate}
+                    onChange={(e) =>
+                      setDraft({ ...draft, expirationDate: e.target.value })
+                    }
+                  />
+                </label>
+                <label>
+                  Warehouse zone
+                  <input
+                    value={draft.warehouseZone}
+                    onChange={(e) =>
+                      setDraft({ ...draft, warehouseZone: e.target.value })
+                    }
+                  />
+                </label>
+                <label>
+                  Bin location
+                  <input
+                    value={draft.binLocation}
+                    onChange={(e) =>
+                      setDraft({ ...draft, binLocation: e.target.value })
+                    }
+                  />
+                </label>
+              </div>
+              {result.classification.uncertainty && (
+                <p className="warning">{result.classification.uncertainty}</p>
+              )}
+              <button
+                className="button primary full"
+                disabled={busy || saved || readOnly}
+                onClick={() => void approve()}
+              >
+                {saved
+                  ? "Added to shared ledger"
+                  : readOnly
+                    ? "Sign in to approve inventory"
+                    : "Approve and add to inventory"}
+              </button>
+              <p className="helper">
+                This human approval creates the inventory record. You can
+                correct it later in the spreadsheet.
+              </p>
+            </>
+          ) : (
+            <div className="empty-vision">
+              <span>Detection review</span>
+              <p>
+                Your image, bounding boxes, detected quantity, and editable item
+                properties will appear here.
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
