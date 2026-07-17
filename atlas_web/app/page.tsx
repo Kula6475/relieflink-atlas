@@ -1,0 +1,3 @@
+import { AtlasDashboard } from "../components/atlas-dashboard";
+import { getSession } from "../lib/auth";
+export default async function Home(){const session=await getSession();return <AtlasDashboard initialUser={session?{displayName:session.displayName,email:session.email}:null}/>}

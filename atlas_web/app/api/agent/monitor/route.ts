@@ -1,0 +1,10 @@
+import { NextResponse } from "next/server";
+import { getSession } from "../../../../lib/auth";
+import { foodBankContext } from "../../../../lib/food-bank";
+import { sql } from "../../../../lib/db";
+
+export async function GET(){const session=await getSession();if(!session)return NextResponse.json({error:"Authentication required"},{status:401});const context=await foodBankContext(session);const items=await sql()`SELECT * FROM inventory_items WHERE site_id=${context.siteId}`;const now=Date.now(),week=now+7*86400000;const recommendations=[];
+ const expiring=items.filter(i=>i.expiration_date&&new Date(String(i.expiration_date)).getTime()<=week&&new Date(String(i.expiration_date)).getTime()>=now);if(expiring.length)recommendations.push({type:"expiration",title:`${expiring.length} lots expire within seven days`,explanation:"Prioritize these lots using first-expired, first-out handling.",evidence:expiring.map(i=>({id:i.id,product:i.product_name,expires:i.expiration_date,quantity:i.quantity})),proposedAction:"Create a priority distribution list",requiresHumanApproval:true});
+ const low=items.filter(i=>Number(i.quantity)<=10);if(low.length)recommendations.push({type:"low_stock",title:`${low.length} items are at or below 10 units`,explanation:"Review local demand before requesting replenishment; the agent will not place an order without permission.",evidence:low.map(i=>({id:i.id,product:i.product_name,quantity:i.quantity})),proposedAction:"Prepare a replenishment review",requiresHumanApproval:true});
+ const missing=items.filter(i=>!i.warehouse_zone||!i.bin_location);if(missing.length)recommendations.push({type:"missing_location",title:`${missing.length} items need warehouse locations`,explanation:"Location data is required for volunteers to find stock quickly.",evidence:missing.map(i=>({id:i.id,product:i.product_name})),proposedAction:"Request location assignment",requiresHumanApproval:true});
+ return NextResponse.json({context,summary:{items:items.length,totalUnits:items.reduce((n,i)=>n+Number(i.quantity),0),expiring:expiring.length,lowStock:low.length,missingLocations:missing.length},recommendations});}
