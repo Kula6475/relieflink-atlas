@@ -9,7 +9,8 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "db:migrate": "tsx scripts/migrate.ts"
+    "db:migrate": "tsx scripts/migrate.ts",
+    "demo:smoke": "tsx scripts/demo-smoke.ts"
   },
   "dependencies": {
     "@neondatabase/serverless": "1.1.0",

@@ -3,15 +3,194 @@
 import { useState } from "react";
 import { apiJson } from "./client-api";
 
-type Step={agent:string;agent_name?:string;sequence?:number;status:string;explanation:string;output:Record<string,any>;requires_human_approval?:boolean;approval?:boolean};
-type Run={id:string;status:string;created_at?:string;steps:Step[]};
-type RunsResponse={runs:Run[]};
+type Step = {
+  agent: string;
+  agent_name?: string;
+  sequence?: number;
+  status: string;
+  explanation: string;
+  output: Record<string, any>;
+  requires_human_approval?: boolean;
+  approval?: boolean;
+};
+type Run = { id: string; status: string; created_at?: string; steps: Step[] };
+type RunsResponse = { runs: Run[] };
 
-export function AtlasOperations(){
-  const [open,setOpen]=useState(false),[busy,setBusy]=useState(false),[runs,setRuns]=useState<Run[]>([]),[error,setError]=useState("");
-  async function load(){const body=await apiJson<RunsResponse>("/api/atlas/operations");setRuns(body.runs)}
-  async function launch(){setBusy(true);setError("");try{const body=await apiJson<{run:Run}>("/api/atlas/operations",{method:"POST"});setRuns(current=>[body.run,...current])}catch(cause){setError(cause instanceof Error?cause.message:"Run failed")}finally{setBusy(false)}}
-  async function decide(id:string,decision:"approved"|"rejected"){setBusy(true);setError("");try{await apiJson(`/api/atlas/operations/${id}/decision`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({decision,note:"Decision recorded in ATLAS command center"})});await load()}catch(cause){setError(cause instanceof Error?cause.message:"Decision failed")}finally{setBusy(false)}}
-  function show(){setOpen(true);setError("");void load().catch(cause=>setError(cause instanceof Error?cause.message:"Command center unavailable"))}
-  return <><button className="button secondary atlas-launch" onClick={show}><span>ATLAS / LIVE OPS</span><strong>Open command center</strong><b>→</b></button>{open&&<div className="atlas-overlay"><div className="atlas-modal"><header><div><p className="eyebrow">Live multi-agent orchestration</p><h2>ATLAS command center</h2><p>Five agents share evidence, negotiate a feasible response, then stop for human authority.</p></div><button className="modal-close" aria-label="Close command center" onClick={()=>setOpen(false)}>×</button></header><div className="agent-roster">{["Inventory","Disruption + demand","Site negotiation","Transport logistics","ATLAS orchestration"].map((name,index)=><div key={name}><span>0{index+1}</span><strong>{name}</strong><small>{index===4?"Coordinates the team":"Specialist agent"}</small></div>)}</div><div className="atlas-actions"><button className="button primary" disabled={busy} onClick={()=>void launch()}>{busy?"Agents working…":"Run live network review"}</button><span>Ledger + weather.gov + OpenFEMA + demand history + partner inventory + route math</span></div>{error&&<p className="error">{error}</p>}<div className="run-list">{runs.map(run=><article key={run.id}><div className="run-head"><div><strong>{new Date(run.created_at||Date.now()).toLocaleString()}</strong><span className={`run-status ${run.status}`}>{run.status.replaceAll("_"," ")}</span></div>{run.status==="awaiting_human"&&<div><button onClick={()=>void decide(run.id,"rejected")}>Reject</button><button className="approve" onClick={()=>void decide(run.id,"approved")}>Approve plan</button></div>}</div><div className="agent-flow">{run.steps.map((step,index)=><div className="flow-step" key={`${step.agent_name||step.agent}-${index}`}><span>{index+1}</span><div><small>{step.agent_name||step.agent}</small><strong>{step.explanation}</strong>{step.output?.counteroffer!==undefined&&<p>Requested {step.output.requested} → counteroffer {step.output.counteroffer}</p>}{step.requires_human_approval||step.approval?<em>Human approval boundary</em>:null}</div></div>)}</div></article>)}{!runs.length&&!busy&&<div className="empty-state"><h3>No orchestration runs yet</h3><p>Start a live review to see evidence move through the supply chain.</p></div>}</div></div></div>}</>;
+export function AtlasOperations() {
+  const [open, setOpen] = useState(false),
+    [busy, setBusy] = useState(false),
+    [runs, setRuns] = useState<Run[]>([]),
+    [error, setError] = useState("");
+  async function load() {
+    const body = await apiJson<RunsResponse>("/api/atlas/operations");
+    setRuns(body.runs);
+  }
+  async function launch() {
+    setBusy(true);
+    setError("");
+    try {
+      const body = await apiJson<{ run: Run }>("/api/atlas/operations", {
+        method: "POST",
+      });
+      setRuns((current) => [body.run, ...current]);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Run failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function decide(id: string, decision: "approved" | "rejected") {
+    setBusy(true);
+    setError("");
+    try {
+      await apiJson(`/api/atlas/operations/${id}/decision`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          decision,
+          note: "Decision recorded in ATLAS command center",
+        }),
+      });
+      await load();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Decision failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+  function show() {
+    setOpen(true);
+    setError("");
+    void load().catch((cause) =>
+      setError(
+        cause instanceof Error ? cause.message : "Command center unavailable",
+      ),
+    );
+  }
+  return (
+    <>
+      <button className="button secondary atlas-launch" onClick={show}>
+        <span>ATLAS / LIVE OPS</span>
+        <strong>Open command center</strong>
+        <b>→</b>
+      </button>
+      {open && (
+        <div className="atlas-overlay">
+          <div className="atlas-modal">
+            <header>
+              <div>
+                <p className="eyebrow">Live multi-agent orchestration</p>
+                <h2>ATLAS command center</h2>
+                <p>
+                  Five agents share evidence, negotiate a feasible response,
+                  then stop for human authority.
+                </p>
+              </div>
+              <button
+                className="modal-close"
+                aria-label="Close command center"
+                onClick={() => setOpen(false)}
+              >
+                ×
+              </button>
+            </header>
+            <div className="agent-roster">
+              {[
+                "Inventory",
+                "Disruption + demand",
+                "Site negotiation",
+                "Transport logistics",
+                "ATLAS orchestration",
+              ].map((name, index) => (
+                <div key={name}>
+                  <span>0{index + 1}</span>
+                  <strong>{name}</strong>
+                  <small>
+                    {index === 4 ? "Coordinates the team" : "Specialist agent"}
+                  </small>
+                </div>
+              ))}
+            </div>
+            <div className="atlas-actions">
+              <button
+                className="button primary"
+                disabled={busy}
+                onClick={() => void launch()}
+              >
+                {busy ? "Agents working…" : "Run live network review"}
+              </button>
+              <span>
+                Ledger + weather.gov + OpenFEMA + demand history + partner
+                inventory + route math
+              </span>
+            </div>
+            {error && <p className="error">{error}</p>}
+            <div className="run-list">
+              {runs.map((run) => (
+                <article key={run.id}>
+                  <div className="run-head">
+                    <div>
+                      <strong>
+                        {new Date(
+                          run.created_at || Date.now(),
+                        ).toLocaleString()}
+                      </strong>
+                      <span className={`run-status ${run.status}`}>
+                        {run.status.replaceAll("_", " ")}
+                      </span>
+                    </div>
+                    {run.status === "awaiting_human" && (
+                      <div>
+                        <button onClick={() => void decide(run.id, "rejected")}>
+                          Reject
+                        </button>
+                        <button
+                          className="approve"
+                          onClick={() => void decide(run.id, "approved")}
+                        >
+                          Approve plan
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  <div className="agent-flow">
+                    {run.steps.map((step, index) => (
+                      <div
+                        className="flow-step"
+                        key={`${step.agent_name || step.agent}-${index}`}
+                      >
+                        <span>{index + 1}</span>
+                        <div>
+                          <small>{step.agent_name || step.agent}</small>
+                          <strong>{step.explanation}</strong>
+                          {step.output?.counteroffer !== undefined && (
+                            <p>
+                              Requested {step.output.requested} → counteroffer{" "}
+                              {step.output.counteroffer}
+                            </p>
+                          )}
+                          {step.requires_human_approval || step.approval ? (
+                            <em>Human approval boundary</em>
+                          ) : null}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+              ))}
+              {!runs.length && !busy && (
+                <div className="empty-state">
+                  <h3>No orchestration runs yet</h3>
+                  <p>
+                    Start a live review to see evidence move through the supply
+                    chain.
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
 }
