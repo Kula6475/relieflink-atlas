@@ -64,7 +64,7 @@ async function countWithClaude(imageDataUrl: string): Promise<{ count: ClaudeCou
   const image = imageDataUrl.split(",")[1];
   const mediaType = imageDataUrl.match(/^data:(.*?);/)?.[1] ?? "image/jpeg";
   async function pass(independent: boolean) {
-    const response = await client.messages.create({
+    const reasoningResponse = await client.messages.create({
       model: setting("CLAUDE_MODEL") ?? "claude-opus-4-8",
       max_tokens: 1800,
       messages: [{ role: "user", content: [
@@ -72,7 +72,23 @@ async function countWithClaude(imageDataUrl: string): Promise<{ count: ClaudeCou
         { type: "text", text: `${CLAUDE_COUNT_PROMPT}${independent ? " Perform an independent recount; do not copy a prior answer." : ""}` },
       ] }],
     });
-    return parseClaudeCount(response.content.filter((block) => block.type === "text").map((block) => block.text).join("\n"));
+    const reasoning = reasoningResponse.content.filter((block) => block.type === "text").map((block) => block.text).join("\n");
+    const extractionResponse = await client.messages.create({
+      model: setting("CLAUDE_MODEL") ?? "claude-opus-4-8",
+      max_tokens: 500,
+      ...({ output_config: { format: { type: "json_schema", schema: {
+        type: "object",
+        properties: {
+          counts: { type: "object", properties: Object.fromEntries(CATEGORIES.map((category) => [category, { type: "integer" }])), required: [...CATEGORIES], additionalProperties: false },
+          notes: { type: "string" },
+        },
+        required: ["counts", "notes"],
+        additionalProperties: false,
+      } } } } as unknown as Record<string, unknown>),
+      messages: [{ role: "user", content: `Extract the final count from this visual record. Return only the schema. Use the running tally, count partially visible items identified by rims/lids/edges, and preserve uncertainty in notes.\n\n${reasoning}` }],
+    });
+    const count = parseClaudeCount(extractionResponse.content.filter((block) => block.type === "text").map((block) => block.text).join("\n"));
+    return { counts: count.counts, notes: [count.notes, reasoning].filter(Boolean).join(" ") };
   }
   const [first, second] = await Promise.all([pass(false), pass(true)]);
   const deltas = CATEGORIES.map((category) => Math.abs(first.counts[category] - second.counts[category]));
