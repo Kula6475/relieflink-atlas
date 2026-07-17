@@ -266,6 +266,10 @@ async function runDetector(bytes: Buffer) {
     try {
       return await runLocalCannedGoods(bytes);
     } catch {
+      // Vercel may not be able to load the native ONNX binary. If the project
+      // has Roboflow configured, use it for the boxes instead of silently
+      // dropping localization altogether.
+      if (setting("ROBOFLOW_API_KEY") && setting("YOLO_MODEL_ID")) return runRoboflow(bytes);
       const metadata = await sharp(bytes).metadata();
       return { width: metadata.width ?? 600, height: metadata.height ?? 600, predictions: [] };
     }
