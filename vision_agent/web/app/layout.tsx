@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 
 import "./globals.css";
 import "./operations.css";
+import "./command-center.css";
 import "leaflet/dist/leaflet.css";
 
 export const metadata: Metadata = {
